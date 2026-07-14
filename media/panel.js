@@ -6,6 +6,7 @@ const savedUi=vscode.getState?.()||{};
 const savedSections=savedUi.openSections?.map((id)=>id==='project'?'build':id);
 let openSections=new Set(savedSections||['build','device']);
 let deepLinkDraft=savedUi.deepLinkDraft||'';
+let sqlDraft=savedUi.sqlDraft||'';
 let locationState={trail:0,mode:'walk',multiplier:1,status:'idle',arc:0,elapsed:0,angle:0,last:0,lastPush:0,serial:'',error:'',latitude:'',longitude:''};
 const trails=[
  {name:'Apple Park Loop',description:'A gentle loop around Apple Park',mode:'walk',loop:true,waypoints:[[37.33272,-122.00833,49],[37.33373,-122.00663,49],[37.33540,-122.00633,49],[37.33675,-122.00759,45],[37.33698,-122.00969,48],[37.33598,-122.01138,49],[37.33431,-122.01169,50],[37.33296,-122.01042,51]]},
@@ -15,11 +16,11 @@ const trails=[
 let prepared=prepare(trails[0]);
 const send=(type,extra={})=>vscode.postMessage({type,...extra});
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const saveUi=()=>vscode.setState?.({deepLinkDraft,openSections:[...openSections]});
+const saveUi=()=>vscode.setState?.({deepLinkDraft,sqlDraft,openSections:[...openSections]});
 const section=(id,title,status,body)=>'<details class="tool-section" data-section="'+id+'"'+(openSections.has(id)?' open':'')+'><summary><span class="section-title">'+title+'</span><span class="section-status">'+status+'</span>'+chevron+'</summary><div class="section-body">'+body+'</div></details>';
 const actionButton=(id,label,kind='pill',disabled=false)=>{const op=state.operation?.id===id?state.operation:null;const running=op?.status==='running';const icon=running?'<span class="spinner"></span>':op?.status==='success'?'<span class="action-result success">✓</span>':op?.status==='error'?'<span class="action-result error">!</span>':'';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+icon+'<span>'+esc(running?op.message:label)+'</span></button>'};
 
-window.addEventListener('message',({data})=>{if(data.type==='state'){state=data.state;if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];render()}if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}});
+window.addEventListener('message',({data})=>{if(data.type==='state'){state=data.state;if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;render()}if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}});
 send('ready');
 
 function render(){
@@ -34,12 +35,13 @@ function render(){
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
  const inspector=inspectorSection(cliReady);
+ const database=databaseSection(deviceOptions,adbReady);
  const stream=section('stream','Stream','Logcat','<p class="muted">Follow live device logs in the integrated terminal.</p>'+actionButton('logcat','Start log stream','primary block',!adbReady));
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
  const allReady=state.cliStatus==='ready'&&state.adbStatus==='ready';
  const setup=allReady?'':setupCard();
  const footer=allReady?toolchainFooter():'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+setup+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+locationSection(locationOptions,adbReady)+stream+footer;
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+setup+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+locationSection(locationOptions,adbReady)+stream+footer;
  bind();
 }
 
@@ -90,6 +92,37 @@ function inspectorAction(id,icon,title,description,disabled=false){const op=stat
 
 function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><div class="inspector-preview-bar"><span><i></i><i></i><i></i></span><span>Latest capture</span></div><div class="inspector-preview-screen"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"></div></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">⌗</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?'Capture ready':cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','◎','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','✦','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','⌁','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
 
+function databaseSection(deviceOptions,adbReady){
+ const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
+ if(db.query&&!sqlDraft)sqlDraft=db.query;
+ const processes=db.processes||[];
+ const status=db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?processes.length+' apps':'Debuggable';
+ const processOptions=processes.length
+  ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===db.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
+  :'<option value="">Scan debuggable apps</option>';
+ const dbOptions=(db.databases||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedDatabase?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No databases</option>';
+ const tableChips=(db.tables||[]).map((name)=>'<button class="chip'+(name===db.selectedTable?' active':'')+'" data-db-table="'+esc(name)+'">'+esc(name)+'</button>').join('')||'<p class="muted">No user tables in this database.</p>';
+ const result=db.result?databaseResult(db.result,db.selectedTable):'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
+ const controls='<div class="field"><label class="caption" for="db-device">Device</label><select id="db-device">'+deviceOptions+'</select></div><div class="field"><label class="caption" for="db-package">Process</label><select id="db-package"'+(processes.length?'':' disabled')+'>'+processOptions+'</select></div><div class="db-toolbar">'+actionButton('db-refresh','Scan apps','secondary',!adbReady)+actionButton('db-push','Push','secondary',!db.dirty)+'</div><div class="field"><label class="caption" for="db-database">Database</label><select id="db-database"'+(db.databases?.length?'':' disabled')+'>'+dbOptions+'</select></div><div class="micro-heading"><span>Tables</span><span>'+(db.tables?.length||0)+'</span></div><div class="chip-row db-tables">'+tableChips+'</div><div class="field"><label class="caption" for="db-sql">SQL</label><textarea id="db-sql" rows="4" spellcheck="false" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea></div><div class="db-toolbar">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+'</div>'+(db.message?'<div class="db-message">'+esc(db.message)+'</div>':'')+(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result;
+ return section('database','Database',status,controls);
+}
+
+function databaseResult(result,table){
+ const columns=result.columns||[],rows=result.rows||[];
+ if(!columns.length&&!rows.length)return '<div class="db-message">'+(esc(result.message||'No rows'))+'</div>';
+ const head='<tr>'+columns.map((column)=>'<th>'+esc(column==='__rowid__'?'rowid':column)+'</th>').join('')+'</tr>';
+ const body=rows.map((row)=>{
+  const rowid=columns.includes('__rowid__')?row[columns.indexOf('__rowid__')]:'';
+  return '<tr>'+row.map((cell,index)=>{
+   const column=columns[index];
+   const editable=table&&rowid!==''&&rowid!=null&&column&&column!=='__rowid__';
+   const display=cell===null?'NULL':cell;
+   return '<td class="'+(cell===null?'db-null':'')+(editable?' db-editable':'')+'"'+(editable?' data-db-cell data-rowid="'+esc(rowid)+'" data-column="'+esc(column)+'" data-table="'+esc(table)+'" title="Click to edit"':'')+'>'+esc(display)+'</td>';
+  }).join('')+'</tr>';
+ }).join('');
+ return '<div class="db-result"><div class="db-result-meta">'+esc(result.message||(rows.length+' row(s)'))+'</div><div class="db-table-wrap"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+}
+
 function deepLinkSection(deviceOptions,adbReady){
  const prefixes=state.deepLinkPrefixes||[],favorites=state.favoriteDeepLinks||[],recent=state.recentDeepLinks||[];
  const suggestions=[...new Set([...prefixes,...favorites,...recent])];
@@ -109,7 +142,7 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){locationState.latitude=document.getElementById('location-latitude')?.value||'';locationState.longitude=document.getElementById('location-longitude')?.value||'';send('location',{serial:locationState.serial,latitude:locationState.latitude,longitude:locationState.longitude})}else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){locationState.latitude=document.getElementById('location-latitude')?.value||'';locationState.longitude=document.getElementById('location-longitude')?.value||'';send('location',{serial:locationState.serial,latitude:locationState.latitude,longitude:locationState.longitude})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});
  document.getElementById('open-deeplink')?.addEventListener('click',()=>{const input=document.getElementById('deeplink-uri');deepLinkDraft=input.value;send('deeplink-open',{uri:deepLinkDraft,serial:document.getElementById('deeplink-device')?.value||''})});
@@ -120,6 +153,11 @@ function bind(){
  app.querySelectorAll('[data-stop]').forEach((el)=>el.addEventListener('click',()=>send('stop',{serial:el.dataset.stop})));
  app.querySelectorAll('[data-start]').forEach((el)=>el.addEventListener('click',()=>send('start',{name:el.dataset.start})));
  app.querySelectorAll('[data-theme]').forEach((el)=>el.addEventListener('click',()=>send('theme',{serial:el.dataset.serial,theme:el.dataset.theme})));
+ document.getElementById('db-package')?.addEventListener('change',(e)=>send('db-package',{packageName:e.target.value}));
+ document.getElementById('db-database')?.addEventListener('change',(e)=>send('db-database',{database:e.target.value}));
+ document.getElementById('db-sql')?.addEventListener('input',(e)=>{sqlDraft=e.target.value;saveUi()});
+ app.querySelectorAll('[data-db-table]').forEach((el)=>el.addEventListener('click',()=>send('db-table',{table:el.dataset.dbTable})));
+ app.querySelectorAll('[data-db-cell]').forEach((el)=>el.addEventListener('click',()=>editDbCell(el)));
  document.getElementById('location-device')?.addEventListener('change',(e)=>{locationState.serial=e.target.value});
  document.getElementById('location-latitude')?.addEventListener('input',(e)=>{locationState.latitude=e.target.value;updateLocationButton()});
  document.getElementById('location-longitude')?.addEventListener('input',(e)=>{locationState.longitude=e.target.value;updateLocationButton()});
@@ -131,6 +169,13 @@ function bind(){
 }
 
 function resetLocation(){locationState.status='idle';locationState.arc=0;locationState.elapsed=0;locationState.lastPush=0}
+function editDbCell(el){
+ const current=el.textContent==='NULL'?'':el.textContent;
+ const next=window.prompt('Edit '+el.dataset.column+' (use NULL for null)',current);
+ if(next===null)return;
+ const value=next.trim().toUpperCase()==='NULL'?null:next;
+ send('db-cell',{table:el.dataset.table,rowid:el.dataset.rowid,column:el.dataset.column,value});
+}
 function speed(){return ({walk:1.4,run:3,cycle:5.5,drive:13.4}[locationState.mode]||1.4)*locationState.multiplier}
 function prepare(trail){const origin=trail.waypoints[0],latScale=111320,lngScale=111320*Math.cos(origin[0]*Math.PI/180);let arc=0;const points=trail.waypoints.concat(trail.loop?[trail.waypoints[0]]:[]).map((w,i,all)=>{const p={x:(w[1]-origin[1])*lngScale,z:-(w[0]-origin[0])*latScale,y:w[2]||0,lat:w[0],lng:w[1],arc};if(i){const q=all[i-1];arc+=Math.hypot((w[1]-q[1])*lngScale,(w[0]-q[0])*latScale,(w[2]||0)-(q[2]||0));p.arc=arc}return p});return{points,total:arc,minAlt:Math.min(...points.map(p=>p.y)),maxAlt:Math.max(...points.map(p=>p.y))}}
 function pointAt(arc){let d=prepared.total?arc%prepared.total:0;for(let i=1;i<prepared.points.length;i++){const a=prepared.points[i-1],b=prepared.points[i];if(b.arc>=d){const t=(d-a.arc)/(b.arc-a.arc||1);return{x:a.x+(b.x-a.x)*t,z:a.z+(b.z-a.z)*t,y:a.y+(b.y-a.y)*t,lat:a.lat+(b.lat-a.lat)*t,lng:a.lng+(b.lng-a.lng)*t}}}return prepared.points[0]}

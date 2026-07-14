@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } from './databaseInspector';
 
 const execFileAsync = promisify(execFile);
 const CACHE_KEY = 'androidCli.dashboardCache.v1';
@@ -34,6 +35,7 @@ type DashboardState = {
   recentDeepLinks: string[];
   favoriteDeepLinks: string[];
   applicationId?: string;
+  database: DatabaseInspectorState;
   initializing?: boolean;
   busy?: string;
   error?: string;
@@ -61,9 +63,11 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   private state: DashboardState;
   private devicePoll?: NodeJS.Timeout;
   private pollingDevices = false;
+  private readonly databases: DatabaseInspector;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
+    this.databases = new DatabaseInspector(adb, () => firstRoot()?.fsPath);
     this.state = {
       cliAvailable: cached?.cliAvailable ?? false,
       cliStatus: 'checking',
@@ -80,6 +84,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       applicationId: cached?.applicationId,
       recentDeepLinks: context.workspaceState.get<string[]>(RECENT_LINKS_KEY) ?? [],
       favoriteDeepLinks: context.workspaceState.get<string[]>(FAVORITE_LINKS_KEY) ?? [],
+      database: emptyDatabaseState(),
       initializing: !cached,
     };
   }
@@ -181,6 +186,18 @@ class DashboardProvider implements vscode.WebviewViewProvider {
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'logcat': return void this.terminal('Logcat', [adb(), ...(message.serial ? ['-s', String(message.serial)] : []), 'logcat']);
+        case 'db-refresh': await this.dbRefresh(String(message.serial ?? '')); return;
+        case 'db-package': await this.dbSelectPackage(String(message.packageName ?? '')); return;
+        case 'db-database': await this.dbSelectDatabase(String(message.database ?? '')); return;
+        case 'db-table': await this.dbSelectTable(String(message.table ?? '')); return;
+        case 'db-query': await this.dbRunQuery(String(message.sql ?? '')); return;
+        case 'db-cell': await this.dbUpdateCell(
+          String(message.table ?? ''),
+          String(message.rowid ?? ''),
+          String(message.column ?? ''),
+          message.value === null || message.value === undefined ? null : String(message.value),
+        ); return;
+        case 'db-push': await this.dbPush(); return;
       }
     } catch (error) {
       this.state.error = messageOf(error);
@@ -346,6 +363,71 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async dbRefresh(serialHint = ''): Promise<void> {
+    const serial = serialHint || await this.chooseDevice();
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    this.state.database = await this.busy(
+      'Scanning debuggable apps…',
+      () => this.databases.refreshProcesses(serial, this.state.applicationId),
+      'db-refresh',
+      'Database inspector ready',
+    );
+  }
+
+  private async dbSelectPackage(packageName: string): Promise<void> {
+    this.state.database = await this.busy(
+      `Opening ${packageName}…`,
+      () => this.databases.selectPackage(packageName),
+      'db-package',
+      'App databases loaded',
+    );
+  }
+
+  private async dbSelectDatabase(database: string): Promise<void> {
+    this.state.database = await this.busy(
+      `Pulling ${database}…`,
+      () => this.databases.selectDatabase(database),
+      'db-database',
+      'Database ready',
+    );
+  }
+
+  private async dbSelectTable(table: string): Promise<void> {
+    this.state.database = await this.busy(
+      `Reading ${table}…`,
+      () => this.databases.selectTable(table),
+      'db-table',
+      'Table loaded',
+    );
+  }
+
+  private async dbRunQuery(sql: string): Promise<void> {
+    this.state.database = await this.busy(
+      'Running SQL…',
+      () => this.databases.runQuery(sql),
+      'db-query',
+      'Query finished',
+    );
+  }
+
+  private async dbUpdateCell(table: string, rowid: string, column: string, value: string | null): Promise<void> {
+    this.state.database = await this.busy(
+      `Updating ${column}…`,
+      () => this.databases.updateCell(table, rowid, column, value),
+      'db-cell',
+      'Cell updated',
+    );
+  }
+
+  private async dbPush(): Promise<void> {
+    this.state.database = await this.busy(
+      'Pushing database…',
+      () => this.databases.push(),
+      'db-push',
+      'Database pushed',
+    );
+  }
+
   private terminal(name: string, command: string[], cwd?: string): void {
     const terminal = vscode.window.createTerminal({ name, cwd });
     terminal.show();
@@ -425,7 +507,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private persistCache(): void {
-    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, ...cache } = this.state;
+    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, database: _database, ...cache } = this.state;
     void this.context.workspaceState.update(CACHE_KEY, cache);
   }
 

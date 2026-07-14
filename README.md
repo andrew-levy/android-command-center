@@ -23,6 +23,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Capture normal or annotated screenshots and preview them in the editor
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
+- Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device
 
 The extension deliberately does not wrap `android studio ...` commands: those require a running Android Studio instance. Kotlin language intelligence should be supplied by a VS Code language-server extension.
 
@@ -44,5 +45,17 @@ The webview is presentation-only. Extension-host code invokes the CLI with argum
 1. Parse `android describe` into build-target and artifact pickers.
 2. Add a structured layout-tree inspector with click-to-highlight.
 3. Add Journey authoring/running and test result views.
-4. Add device actions (rotation, deep links, permissions, app data, recordings).
+4. Add device actions (rotation, permissions, app data clear, recordings).
 5. Expose stable VS Code commands so agents and tasks can trigger the same workflows.
+
+## Database inspector
+
+Inspect SQLite / Room databases for **debuggable** apps without Android Studio:
+
+1. Open the **Database** section and choose a device.
+2. **Scan apps** to list packages that allow `run-as` (debug builds).
+3. Pick a process and database, browse tables, run SQL, or click a cell to edit.
+4. Mutating statements and cell edits are applied locally then **pushed** back to the device. Use **Push** if you need to retry a write.
+
+Working copies live under `.android-cli/databases/` in the workspace. If the app already has the DB open, force-stop or relaunch it after a push so it reloads from disk.
+

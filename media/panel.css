@@ -233,6 +233,34 @@ details[open] .chevron { transform: rotate(180deg); }
 .location-error { color: var(--danger); font-size: 10px; }
 .location-error:empty { display: none; }
 
+/* ---------- Database inspector ---------- */
+.db-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.db-tables { max-height: 72px; overflow: auto; }
+.chip.active { background: var(--text); color: var(--page); border-color: transparent; }
+textarea#db-sql {
+  width: 100%;
+  min-height: 78px;
+  resize: vertical;
+  padding: 8px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  font: 11px/1.45 var(--mono);
+}
+textarea#db-sql:focus { border-color: var(--focus); outline: none; }
+.db-message { color: var(--muted); font-size: 10px; }
+.db-result { display: flex; flex-direction: column; gap: 6px; }
+.db-result-meta { color: var(--muted); font-size: 10px; font-family: var(--mono); }
+.db-table-wrap { overflow: auto; max-height: 240px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--deep); }
+.db-table { width: max-content; min-width: 100%; border-collapse: collapse; font: 10px/1.35 var(--mono); }
+.db-table th, .db-table td { padding: 5px 7px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); text-align: left; vertical-align: top; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-table th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; }
+.db-table tr:last-child td { border-bottom: 0; }
+.db-null { color: var(--muted); font-style: italic; }
+.db-editable { cursor: pointer; }
+.db-editable:hover { background: var(--hover); }
+
 /* ---------- Overlays ---------- */
 .error-toast { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 10; display: grid; grid-template-columns: 18px minmax(0,1fr) 24px; align-items: start; gap: 7px; padding: 9px 8px 9px 9px; border: 1px solid var(--error-border); border-radius: 9px; background: var(--error-bg); box-shadow: 0 8px 28px var(--shadow); color: var(--error-fg); font-size: 10px; backdrop-filter: blur(12px); animation: toast-in .16s ease-out; }
 .error-toast-icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); font-weight: 800; }
