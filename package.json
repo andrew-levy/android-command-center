@@ -1,0 +1,74 @@
+{
+  "name": "android-cli-panel",
+  "displayName": "Android Command Center",
+  "description": "Build, run, inspect, and control Android apps without leaving VS Code or Cursor.",
+  "version": "0.1.3",
+  "publisher": "local",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onView:androidCli.dashboard"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{
+        "id": "androidCli",
+        "title": "Android Command Center",
+        "icon": "media/android.svg"
+      }]
+    },
+    "views": {
+      "androidCli": [{
+        "type": "webview",
+        "id": "androidCli.dashboard",
+        "name": "Android Command Center"
+      }]
+    },
+    "commands": [
+      { "command": "androidCli.refresh", "title": "Android Command Center: Refresh" },
+      { "command": "androidCli.openDashboard", "title": "Android Command Center: Open Dashboard" }
+    ],
+    "configuration": {
+      "title": "Android Command Center",
+      "properties": {
+        "androidCli.executable": {
+          "type": "string",
+          "default": "android",
+          "description": "Path to the Android CLI executable in the extension-host environment."
+        },
+        "androidCli.adbExecutable": {
+          "type": "string",
+          "default": "adb",
+          "description": "Path to adb in the extension-host environment."
+        },
+        "androidCli.gradleTask": {
+          "type": "string",
+          "default": "assembleDebug",
+          "description": "Gradle task used by Build."
+        },
+        "androidCli.apkGlob": {
+          "type": "string",
+          "default": "**/build/outputs/apk/debug/*.apk",
+          "description": "Workspace glob used to find the APK for Run."
+        },
+        "androidCli.deepLinkPrefixes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Deeplink prefixes to suggest in addition to schemes discovered from Android manifests."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p . && npm run check:webview",
+    "check:webview": "node scripts/check-webview.cjs",
+    "watch": "tsc -w -p .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "androidCli.executable": "/Users/andrewlevy/.local/bin/android",
+  "androidCli.adbExecutable": "/Users/andrewlevy/Library/Android/sdk/platform-tools/adb",
+  "typescript.tsdk": "node_modules/typescript/lib"
+}
