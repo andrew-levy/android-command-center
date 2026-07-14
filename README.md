@@ -23,6 +23,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Capture normal or annotated screenshots and preview them in the editor
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
+- Clear app cache or storage and force-stop installed packages on a connected device
 
 The extension deliberately does not wrap `android studio ...` commands: those require a running Android Studio instance. Kotlin language intelligence should be supplied by a VS Code language-server extension.
 
@@ -44,5 +45,5 @@ The webview is presentation-only. Extension-host code invokes the CLI with argum
 1. Parse `android describe` into build-target and artifact pickers.
 2. Add a structured layout-tree inspector with click-to-highlight.
 3. Add Journey authoring/running and test result views.
-4. Add device actions (rotation, deep links, permissions, app data, recordings).
+4. Add device actions (rotation, permissions, recordings).
 5. Expose stable VS Code commands so agents and tasks can trigger the same workflows.

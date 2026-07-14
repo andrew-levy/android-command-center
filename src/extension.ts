@@ -10,6 +10,7 @@ const CACHE_KEY = 'androidCli.dashboardCache.v1';
 const VARIANT_KEY = 'androidCli.selectedVariant.v1';
 const RECENT_LINKS_KEY = 'androidCli.recentDeepLinks.v1';
 const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
+const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
 
 type Device = { serial: string; state: string; description: string; avdName?: string; theme?: 'light' | 'dark' | 'auto' };
 type BuildVariant = { id: string; label: string; name: string; module?: string; task: string };
@@ -34,6 +35,9 @@ type DashboardState = {
   recentDeepLinks: string[];
   favoriteDeepLinks: string[];
   applicationId?: string;
+  appPackages: string[];
+  selectedAppPackage?: string;
+  appDataMessage?: string;
   initializing?: boolean;
   busy?: string;
   error?: string;
@@ -80,6 +84,8 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       applicationId: cached?.applicationId,
       recentDeepLinks: context.workspaceState.get<string[]>(RECENT_LINKS_KEY) ?? [],
       favoriteDeepLinks: context.workspaceState.get<string[]>(FAVORITE_LINKS_KEY) ?? [],
+      appPackages: cached?.appPackages ?? [],
+      selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
       initializing: !cached,
     };
   }
@@ -181,6 +187,11 @@ class DashboardProvider implements vscode.WebviewViewProvider {
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'logcat': return void this.terminal('Logcat', [adb(), ...(message.serial ? ['-s', String(message.serial)] : []), 'logcat']);
+        case 'app-packages': await this.refreshAppPackages(String(message.serial ?? '')); return;
+        case 'app-package': await this.selectAppPackage(String(message.packageName ?? '')); return;
+        case 'app-clear-cache': await this.clearAppCache(String(message.serial ?? ''), String(message.packageName ?? '')); return;
+        case 'app-clear-data': await this.clearAppData(String(message.serial ?? ''), String(message.packageName ?? '')); return;
+        case 'app-force-stop': await this.forceStopApp(String(message.serial ?? ''), String(message.packageName ?? '')); return;
       }
     } catch (error) {
       this.state.error = messageOf(error);
@@ -290,6 +301,10 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     const configured = config().get<string[]>('deepLinkPrefixes', []);
     this.state.deepLinkPrefixes = unique([...configured, ...discovered.prefixes]);
     this.state.applicationId = discovered.applicationId;
+    if (discovered.applicationId && !this.state.selectedAppPackage) {
+      this.state.selectedAppPackage = discovered.applicationId;
+      await this.context.workspaceState.update(APP_PACKAGE_KEY, discovered.applicationId);
+    }
   }
 
   private async startEmulator(name: string): Promise<void> {
@@ -344,6 +359,97 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       this.view?.webview.postMessage({ type: 'location-result', ok: false, error: messageOf(error) });
     }
+  }
+
+  private async refreshAppPackages(serialHint = ''): Promise<void> {
+    const serial = serialHint || await this.chooseDevice();
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    await this.busy('Listing installed apps…', async () => {
+      const packages = await listInstalledPackages(serial);
+      if (this.state.applicationId && !packages.includes(this.state.applicationId)) {
+        try {
+          await run(adb(), ['-s', serial, 'shell', 'pm', 'path', this.state.applicationId]);
+          packages.unshift(this.state.applicationId);
+        } catch {
+          // Project applicationId is not installed on this device yet.
+        }
+      }
+      this.state.appPackages = packages;
+      const preferred = this.state.selectedAppPackage || this.state.applicationId;
+      if (preferred && packages.includes(preferred)) this.state.selectedAppPackage = preferred;
+      else if (!this.state.selectedAppPackage || !packages.includes(this.state.selectedAppPackage)) {
+        this.state.selectedAppPackage = this.state.applicationId && packages.includes(this.state.applicationId)
+          ? this.state.applicationId
+          : packages[0];
+      }
+      if (this.state.selectedAppPackage) {
+        await this.context.workspaceState.update(APP_PACKAGE_KEY, this.state.selectedAppPackage);
+      }
+      this.state.appDataMessage = packages.length
+        ? `${packages.length} installed app${packages.length === 1 ? '' : 's'}`
+        : 'No third-party packages found';
+      this.persistCache();
+    }, 'app-packages', 'Apps loaded');
+  }
+
+  private async selectAppPackage(packageName: string): Promise<void> {
+    const trimmed = packageName.trim();
+    if (!trimmed) return;
+    this.state.selectedAppPackage = trimmed;
+    this.state.appDataMessage = undefined;
+    await this.context.workspaceState.update(APP_PACKAGE_KEY, trimmed);
+    this.persistCache();
+    this.render();
+  }
+
+  private async clearAppCache(serialHint: string, packageHint: string): Promise<void> {
+    const { serial, packageName } = await this.requireAppTarget(serialHint, packageHint);
+    await this.busy(`Clearing cache for ${packageName}…`, async () => {
+      try {
+        await run(adb(), ['-s', serial, 'shell', 'pm', 'clear', '--cache-only', packageName]);
+      } catch (error) {
+        // Older Images may lack --cache-only; fall back to wiping cache dirs for debuggable apps.
+        try {
+          await run(adb(), ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', 'rm -rf cache code_cache']);
+        } catch {
+          throw new Error(`Could not clear cache for ${packageName}. ${messageOf(error)}`);
+        }
+      }
+      this.state.appDataMessage = `Cleared cache for ${packageName}`;
+    }, 'app-clear-cache', 'Cache cleared');
+  }
+
+  private async clearAppData(serialHint: string, packageHint: string): Promise<void> {
+    const { serial, packageName } = await this.requireAppTarget(serialHint, packageHint);
+    const confirmed = await vscode.window.showWarningMessage(
+      `Clear all storage for ${packageName}? This deletes databases, prefs, and files like the emulator's Clear storage.`,
+      { modal: true },
+      'Clear storage',
+    );
+    if (confirmed !== 'Clear storage') return;
+    await this.busy(`Clearing storage for ${packageName}…`, async () => {
+      const output = await run(adb(), ['-s', serial, 'shell', 'pm', 'clear', packageName]);
+      if (!/success/i.test(output) && output.trim()) throw new Error(output.trim());
+      this.state.appDataMessage = `Cleared storage for ${packageName}`;
+    }, 'app-clear-data', 'Storage cleared');
+  }
+
+  private async forceStopApp(serialHint: string, packageHint: string): Promise<void> {
+    const { serial, packageName } = await this.requireAppTarget(serialHint, packageHint);
+    await this.busy(`Force-stopping ${packageName}…`, async () => {
+      await run(adb(), ['-s', serial, 'shell', 'am', 'force-stop', packageName]);
+      this.state.appDataMessage = `Force-stopped ${packageName}`;
+    }, 'app-force-stop', 'App stopped');
+  }
+
+  private async requireAppTarget(serialHint: string, packageHint: string): Promise<{ serial: string; packageName: string }> {
+    const serial = serialHint || await this.chooseDevice();
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    const packageName = (packageHint || this.state.selectedAppPackage || this.state.applicationId || '').trim();
+    if (!packageName) throw new Error('Choose an app package first. Scan installed apps or build the project to discover one.');
+    this.state.selectedAppPackage = packageName;
+    await this.context.workspaceState.update(APP_PACKAGE_KEY, packageName);
+    return { serial, packageName };
   }
 
   private terminal(name: string, command: string[], cwd?: string): void {
@@ -425,7 +531,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private persistCache(): void {
-    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, ...cache } = this.state;
+    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, appDataMessage: _appDataMessage, ...cache } = this.state;
     void this.context.workspaceState.update(CACHE_KEY, cache);
   }
 
@@ -617,6 +723,17 @@ async function enrichDevices(devices: Device[]): Promise<Device[]> {
 function summarizeAdb(output: string): string {
   return output.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(Status|Activity):/i.test(line)) ?? '';
 }
+
+async function listInstalledPackages(serial: string): Promise<string[]> {
+  const output = await run(adb(), ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3']);
+  return unique(
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^package:/, ''))
+      .filter((name) => Boolean(name) && name.includes('.')),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 function shellQuote(value: string): string {
   if (process.platform === 'win32') return `"${value.replaceAll('"', '""')}"`;
   return `'${value.replaceAll("'", "'\\''")}'`;

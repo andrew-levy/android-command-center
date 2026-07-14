@@ -47,11 +47,13 @@ main { width: 100%; padding: 8px 0 14px; display: flex; flex-direction: column; 
 .skeleton-card.short { height: 92px; }
 
 /* ---------- Shared controls ---------- */
-.primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: var(--control-height); padding: 0 12px; border: 0; border-radius: var(--radius-control); font-weight: 600; cursor: pointer; transition: background .12s, border-color .12s, transform .08s; }
+.primary, .secondary, .danger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: var(--control-height); padding: 0 12px; border: 0; border-radius: var(--radius-control); font-weight: 600; cursor: pointer; transition: background .12s, border-color .12s, transform .08s; }
 .primary { background: var(--text); color: var(--page); }
 .primary:hover { background: color-mix(in srgb, var(--text) 86%, var(--page)); }
 .secondary { background: var(--faint); border: 1px solid var(--line); color: var(--text); }
 .secondary:hover { background: var(--hover); border-color: var(--line-strong); }
+.danger { background: color-mix(in srgb, var(--danger) 14%, var(--page)); border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent); color: var(--danger); }
+.danger:hover { background: color-mix(in srgb, var(--danger) 22%, var(--page)); }
 .block { width: 100%; }
 .button-row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
 .pill { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 24px; padding: 0 10px; background: var(--faint); border: 1px solid var(--line); border-radius: 999px; font-size: 11px; cursor: pointer; transition: background .12s, border-color .12s; }
@@ -232,6 +234,10 @@ details[open] .chevron { transform: rotate(180deg); }
 .speed { min-width: 52px; font-family: var(--mono); }
 .location-error { color: var(--danger); font-size: 10px; }
 .location-error:empty { display: none; }
+
+/* ---------- App data ---------- */
+.app-data-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.app-data-message { color: var(--muted); font-size: 10px; font-family: var(--mono); }
 
 /* ---------- Overlays ---------- */
 .error-toast { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 10; display: grid; grid-template-columns: 18px minmax(0,1fr) 24px; align-items: start; gap: 7px; padding: 9px 8px 9px 9px; border: 1px solid var(--error-border); border-radius: 9px; background: var(--error-bg); box-shadow: 0 8px 28px var(--shadow); color: var(--error-fg); font-size: 10px; backdrop-filter: blur(12px); animation: toast-in .16s ease-out; }
