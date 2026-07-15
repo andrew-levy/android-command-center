@@ -34,12 +34,13 @@ function render(){
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
  const inspector=inspectorSection(cliReady);
+ const appData=appDataSection(deviceOptions,adbReady);
  const stream=section('stream','Stream','Logcat','<p class="muted">Follow live device logs in the integrated terminal.</p>'+actionButton('logcat','Start log stream','primary block',!adbReady));
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
  const allReady=state.cliStatus==='ready'&&state.adbStatus==='ready';
  const setup=allReady?'':setupCard();
  const footer=allReady?toolchainFooter():'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+setup+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+locationSection(locationOptions,adbReady)+stream+footer;
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+setup+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+appData+locationSection(locationOptions,adbReady)+stream+footer;
  bind();
 }
 
@@ -90,6 +91,18 @@ function inspectorAction(id,icon,title,description,disabled=false){const op=stat
 
 function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><div class="inspector-preview-bar"><span><i></i><i></i><i></i></span><span>Latest capture</span></div><div class="inspector-preview-screen"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"></div></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">⌗</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?'Capture ready':cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','◎','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','✦','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','⌁','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
 
+function appDataSection(deviceOptions,adbReady){
+ const packages=state.appPackages||[];
+ const selected=state.selectedAppPackage||state.applicationId||'';
+ const status=selected?selected.split('.').slice(-1)[0]:'Pick an app';
+ const packageOptions=packages.length
+  ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selected?' selected':'')+'>'+esc(name)+'</option>').join('')
+  :(selected?'<option value="'+esc(selected)+'" selected>'+esc(selected)+'</option>':'<option value="">Scan installed apps</option>');
+ const disabled=!adbReady||!selected;
+ const body='<p class="muted">Clear cache or storage without opening emulator Settings. Storage wipe matches the system Clear storage action.</p><div class="field"><label class="caption" for="app-device">Device</label><select id="app-device">'+deviceOptions+'</select></div><div class="field"><label class="caption" for="app-package">Package</label><select id="app-package"'+(packages.length||selected?'':' disabled')+'>'+packageOptions+'</select></div><div class="app-data-toolbar">'+actionButton('app-packages','Scan apps','secondary',!adbReady)+actionButton('app-force-stop','Force stop','secondary',disabled)+'</div><div class="app-data-toolbar">'+actionButton('app-clear-cache','Clear cache','secondary',disabled)+actionButton('app-clear-data','Clear storage','danger',disabled)+'</div>'+(state.appDataMessage?'<div class="app-data-message">'+esc(state.appDataMessage)+'</div>':'');
+ return section('appdata','App data',status,body);
+}
+
 function deepLinkSection(deviceOptions,adbReady){
  const prefixes=state.deepLinkPrefixes||[],favorites=state.favoriteDeepLinks||[],recent=state.recentDeepLinks||[];
  const suggestions=[...new Set([...prefixes,...favorites,...recent])];
@@ -109,8 +122,9 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){locationState.latitude=document.getElementById('location-latitude')?.value||'';locationState.longitude=document.getElementById('location-longitude')?.value||'';send('location',{serial:locationState.serial,latitude:locationState.latitude,longitude:locationState.longitude})}else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){locationState.latitude=document.getElementById('location-latitude')?.value||'';locationState.longitude=document.getElementById('location-longitude')?.value||'';send('location',{serial:locationState.serial,latitude:locationState.latitude,longitude:locationState.longitude})}else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
+ document.getElementById('app-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});
  document.getElementById('open-deeplink')?.addEventListener('click',()=>{const input=document.getElementById('deeplink-uri');deepLinkDraft=input.value;send('deeplink-open',{uri:deepLinkDraft,serial:document.getElementById('deeplink-device')?.value||''})});
  document.getElementById('favorite-deeplink')?.addEventListener('click',()=>send('deeplink-favorite',{uri:document.getElementById('deeplink-uri')?.value||''}));
