@@ -6,3 +6,14 @@ node_modules/**
 *.vsix
 .android-cli/**
 dev/**
+test/**
+test-artifacts/**
+scripts/**
+**/*.map
+BUGS.md
+EXTENSION_HEALTH.md
+TESTING.md
+TEST_PLAN.md
+.DS_Store
+.gitignore
+media/marketplace-icon-source.svg

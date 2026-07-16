@@ -1,6 +1,15 @@
 # Android Command Center
 
-A Cursor/VS Code activity-bar panel for everyday Android development without opening Android Studio.
+A Cursor/VS Code activity-bar panel for everyday Android development without opening Android Studio. Build, launch, inspect, and control Android apps from one compact, theme-aware sidebar.
+
+> Android Command Center is currently a preview release. Please report unexpected behavior through the project issue tracker.
+
+## Quick start
+
+1. Install the extension and open an Android project in VS Code or Cursor.
+2. Select the Android robot in the activity bar.
+3. Review the **Toolchain** section and prepare or select any missing tools.
+4. Choose a Gradle variant, select a connected device or emulator, and click **Run**.
 
 ## Requirements
 
@@ -13,7 +22,7 @@ Android Command Center uses the tools installed in the environment where its VS 
 
 The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths.
 
-## MVP features
+## Features
 
 - Detect the Android CLI, SDK, connected devices, and virtual devices
 - Build and run in one click, matching Android Studio's Run flow: build, install, and launch
@@ -28,6 +37,12 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Clear app cache or storage and force-stop installed packages on a connected device
 
 The extension deliberately does not wrap `android studio ...` commands: those require a running Android Studio instance. Kotlin language intelligence should be supplied by a VS Code language-server extension.
+
+## Privacy and command execution
+
+Android Command Center does not require an account or send project data to a hosted service. It invokes the Android CLI, ADB, Gradle wrapper, and SQLite tools in the extension-host environment. Interactive and long-running commands open in the integrated terminal so you can inspect or cancel them.
+
+Destructive app-data actions identify the selected device and package and require confirmation where appropriate. Database editing is intended for debuggable apps and works through local workspace copies under `.android-cli/databases/`.
 
 ## Develop
 
@@ -44,7 +59,7 @@ For automated checks, real-emulator journeys, and deterministic missing-tool/dev
 
 The webview is presentation-only. Extension-host code invokes the CLI with argument arrays (no shell), while interactive Gradle, emulator, and logcat processes run visibly in integrated terminals. This keeps long-running work cancellable and makes every developer-initiated command inspectable.
 
-## Next milestones
+## Roadmap
 
 1. Parse `android describe` into build-target and artifact pickers.
 2. Add a structured layout-tree inspector with click-to-highlight.

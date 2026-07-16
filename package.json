@@ -2,30 +2,73 @@
   "name": "android-cli-panel",
   "displayName": "Android Command Center",
   "description": "Build, run, inspect, and control Android apps without leaving VS Code or Cursor.",
-  "version": "0.1.4",
-  "publisher": "local",
-  "engines": { "vscode": "^1.96.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onView:androidCli.dashboard"],
+  "version": "0.1.5",
+  "publisher": "andrew-levy",
+  "license": "MIT",
+  "icon": "media/marketplace-icon.png",
+  "galleryBanner": {
+    "color": "#0b1220",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "preview": true,
+  "keywords": [
+    "android",
+    "adb",
+    "emulator",
+    "gradle",
+    "sqlite",
+    "room",
+    "logcat",
+    "deeplink",
+    "cursor"
+  ],
+  "homepage": "https://github.com/andrew-levy/android-command-center#readme",
+  "bugs": {
+    "url": "https://github.com/andrew-levy/android-command-center/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andrew-levy/android-command-center.git"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:androidCli.dashboard"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{
-        "id": "androidCli",
-        "title": "Android Command Center",
-        "icon": "media/android.svg"
-      }]
+      "activitybar": [
+        {
+          "id": "androidCli",
+          "title": "Android Command Center",
+          "icon": "media/android.svg"
+        }
+      ]
     },
     "views": {
-      "androidCli": [{
-        "type": "webview",
-        "id": "androidCli.dashboard",
-        "name": "Android Command Center"
-      }]
+      "androidCli": [
+        {
+          "type": "webview",
+          "id": "androidCli.dashboard",
+          "name": "Android Command Center"
+        }
+      ]
     },
     "commands": [
-      { "command": "androidCli.refresh", "title": "Android Command Center: Refresh" },
-      { "command": "androidCli.openDashboard", "title": "Android Command Center: Open Dashboard" }
+      {
+        "command": "androidCli.refresh",
+        "title": "Android Command Center: Refresh"
+      },
+      {
+        "command": "androidCli.openDashboard",
+        "title": "Android Command Center: Open Dashboard"
+      }
     ],
     "configuration": {
       "title": "Android Command Center",
@@ -57,7 +100,9 @@
         },
         "androidCli.deepLinkPrefixes": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Deeplink prefixes to suggest in addition to schemes discovered from Android manifests."
         }
@@ -65,6 +110,7 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p . && npm run check:webview",
     "check:webview": "node scripts/check-webview.cjs",
     "test": "npm run compile && node --test test/*.test.cjs",
@@ -72,8 +118,8 @@
     "package": "vsce package"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/vscode": "^1.96.0",
+    "@types/node": "20.17.10",
+    "@types/vscode": "1.96.0",
     "@vscode/vsce": "^3.2.1",
     "typescript": "^5.7.2"
   }
