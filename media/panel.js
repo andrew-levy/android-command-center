@@ -33,8 +33,8 @@ const iconShapes={
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
 const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',database:'database',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','db-refresh':'search','db-query':'play','db-push':'upload','app-packages':'search','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
-let state={devices:[],emulators:[],cliAvailable:false,cliStatus:'checking',adbStatus:'checking'};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+let state={devices:[],emulators:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
 const savedUi=vscode.getState?.()||{};
 const uiVersion=2;
 let openSections=new Set(restoreOpenSections(savedUi,uiVersion));
@@ -59,15 +59,16 @@ const group=(rows)=>'<div class="settings-group">'+rows+'</div>';
 const row=(label,controls,labelClass='',sublabel='')=>'<div class="row"><span class="row-copy"><span class="row-label'+(labelClass?' '+labelClass:'')+'">'+esc(label)+'</span>'+(sublabel?'<span class="row-sublabel">'+esc(sublabel)+'</span>':'')+'</span><span class="row-controls">'+controls+'</span></div>';
 const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span class="select-wrap"><select id="'+id+'"'+(disabled?' disabled':'')+(label?' aria-label="'+esc(label)+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+options+'</select></span>';
 const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
-const actionButton=(id,label,kind='pill',disabled=false)=>{const op=state.operation?.id===id?state.operation:null;const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
+const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
 window.addEventListener('message',({data})=>{if(data.type==='state'){state=data.state;if(!testOpenSectionsApplied&&Array.isArray(state.testOpenSections)){openSections=new Set(state.testOpenSections);testOpenSectionsApplied=true}if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;render()}if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}});
+render();
 send('ready');
 
 function render(){
- if(state.initializing){app.innerHTML='<div class="skeleton"><div class="skeleton-card hero"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card short"></div></div>';return}
  const devices=state.devices||[],online=devices.filter((d)=>d.state==='device'),locationDevices=online.filter((d)=>d.serial.startsWith('emulator-')),avds=state.emulators||[];
  if(!locationDevices.some((d)=>d.serial===locationState.serial))locationState.serial=locationDevices[0]?.serial||'';
  if(locationState.status==='playing'&&state.adbStatus!=='checking'&&!canPlayRoute(state.adbStatus==='ready',locationState.serial)){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}
+ const optionsFor=(serial)=>online.length?online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===(serial||online[0]?.serial)?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">No device online</option>';
  const deviceOptions=online.length?online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">No device online</option>';
  const locationOptions=locationDevices.length?locationDevices.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">Start an emulator first</option>';
  const variants=state.variants||[],selected=state.selectedVariant||variants[0]?.id||'';
@@ -76,11 +77,12 @@ function render(){
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
  const inspector=inspectorSection(cliReady);
- const database=databaseSection(deviceOptions,adbReady,sqliteReady);
- const appData=appDataSection(deviceOptions,adbReady);
+ const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
+ const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady),'','Live Logcat output')));
+ const loadingToast=state.initializing?'<div class="loading-toast" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading tools, devices, and app data…</span></div>':'';
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
  bind();
 }
 
@@ -144,22 +146,23 @@ function databaseSection(deviceOptions,adbReady,sqliteReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
  if(db.query&&!sqlDraft)sqlDraft=db.query;
  const processes=db.processes||[];
- const status=!sqliteReady?'Needs SQLite':db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?processes.length+' apps':'Debuggable';
+ const status=state.databaseScanning?'Scanning…':!sqliteReady?'Needs SQLite':db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?processes.length+' apps':'Debuggable';
  const processOptions=processes.length
   ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===db.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
   :'<option value="">Scan debuggable apps</option>';
  const dbOptions=(db.databases||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedDatabase?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No databases</option>';
- const tableChips=(db.tables||[]).map((name)=>'<button class="chip'+(name===db.selectedTable?' active':'')+'" data-db-table="'+esc(name)+'">'+esc(name)+'</button>').join('')||'<p class="muted">No user tables in this database.</p>';
+ const tableOptions=(db.tables||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedTable?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No user tables</option>';
  const result=db.result
   ?databaseResult(db.result,db.selectedTable,db.message)
   :db.message?'<div class="db-message">'+esc(db.message)+'</div>'
   :'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
  const controls=group(
-   row('Device',selectWrap('db-device',deviceOptions,{label:'Database device'}),'','Query target')
-   +row('Scan debuggable apps',actionButton('db-refresh','Scan','secondary compact',!adbReady||!sqliteReady),'','Refresh app and database list')
+   row('Device',selectWrap('db-device',deviceOptions,{disabled:state.databaseScanning,label:'Database device'}),'','Query target')
+   +row('Refresh',actionButton('db-refresh','Refresh','secondary compact',!adbReady||!sqliteReady,state.databaseScanning),'','Apps, databases, and tables')
    +row('App',selectWrap('db-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}),'','Debuggable process')
    +row('Database',selectWrap('db-database',dbOptions,{disabled:!(db.databases?.length),label:'Database'}),'','On-device SQLite')
-  )+'<div class="micro-heading"><span>Tables</span><span>'+(db.tables?.length||0)+'</span></div><div class="chip-row db-tables">'+tableChips+'</div>'
+   +row('Table',selectWrap('db-table',tableOptions,{disabled:!(db.tables?.length),label:'Database table'}),'','Table to inspect')
+  )
   +'<textarea id="db-sql" rows="4" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea>'
   +'<div class="action-strip">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+actionButton('db-push','Push','secondary',!db.dirty)+'</div>'
   +(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result;
@@ -186,15 +189,15 @@ function databaseResult(result,table,message){
 function appDataSection(deviceOptions,adbReady){
  const packages=state.appPackages||[];
  const selected=state.selectedAppPackage||state.applicationId||'';
- const status=selected?selected.split('.').slice(-1)[0]:'Pick an app';
+ const status=state.appPackagesScanning?'Scanning…':selected?selected.split('.').slice(-1)[0]:'Pick an app';
  const packageOptions=packages.length
   ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selected?' selected':'')+'>'+esc(name)+'</option>').join('')
   :(selected?'<option value="'+esc(selected)+'" selected>'+esc(selected)+'</option>':'<option value="">Scan installed apps</option>');
  const disabled=!adbReady||!selected;
  const body=group(
-  row('Device',selectWrap('app-device',deviceOptions,{label:'App data device'}),'','Data target')
+  row('Device',selectWrap('app-device',deviceOptions,{disabled:state.appPackagesScanning,label:'App data device'}),'','Data target')
   +row('Package',selectWrap('app-package',packageOptions,{disabled:!packages.length&&!selected,label:'Installed package'}),'','Installed app ID')
-  +row('Scan installed apps',actionButton('app-packages','Scan','secondary compact',!adbReady),'','Refresh package list')
+  +row('Refresh',actionButton('app-packages','Refresh','secondary compact',!adbReady,state.appPackagesScanning),'','Installed package list')
   +row('Force stop',actionButton('app-force-stop','Stop','secondary compact',disabled),'','End app process')
   +row('Clear cache',actionButton('app-clear-cache','Clear','secondary compact',disabled),'','Keep user data')
   +row('Clear storage',actionButton('app-clear-data','Clear','danger compact',disabled),'','Reset app data')
@@ -249,6 +252,7 @@ function bind(){
  app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('app-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
+ document.getElementById('app-device')?.addEventListener('change',(e)=>send('app-packages',{serial:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});
  document.getElementById('deeplink-uri')?.addEventListener('keydown',(e)=>{if(e.key!=='Enter')return;const button=document.getElementById('open-deeplink');if(button&&!button.disabled)button.click()});
  document.getElementById('open-deeplink')?.addEventListener('click',()=>{const input=document.getElementById('deeplink-uri');deepLinkDraft=input.value;send('deeplink-open',{uri:deepLinkDraft,serial:document.getElementById('deeplink-device')?.value||''})});
@@ -260,9 +264,10 @@ function bind(){
  app.querySelectorAll('[data-start]').forEach((el)=>el.addEventListener('click',()=>send('start',{name:el.dataset.start})));
  app.querySelectorAll('[data-theme]').forEach((el)=>el.addEventListener('click',()=>send('theme',{serial:el.dataset.serial,theme:el.dataset.theme})));
  document.getElementById('db-package')?.addEventListener('change',(e)=>send('db-package',{packageName:e.target.value}));
+ document.getElementById('db-device')?.addEventListener('change',(e)=>send('db-refresh',{serial:e.target.value}));
  document.getElementById('db-database')?.addEventListener('change',(e)=>send('db-database',{database:e.target.value}));
+ document.getElementById('db-table')?.addEventListener('change',(e)=>send('db-table',{table:e.target.value}));
  document.getElementById('db-sql')?.addEventListener('input',(e)=>{sqlDraft=e.target.value;saveUi()});
- app.querySelectorAll('[data-db-table]').forEach((el)=>el.addEventListener('click',()=>send('db-table',{table:el.dataset.dbTable})));
  app.querySelectorAll('[data-db-cell]').forEach((el)=>el.addEventListener('click',()=>editDbCell(el)));
  document.getElementById('location-device')?.addEventListener('change',(e)=>{locationState.serial=e.target.value;if(!canPlayRoute(state.adbStatus==='ready',locationState.serial)&&locationState.status==='playing'){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}render()});
  app.querySelectorAll('[data-location-view]').forEach((el)=>el.addEventListener('click',()=>{const view=el.dataset.locationView;if(view===locationState.view)return;if(view==='point'&&locationState.status==='playing')locationState.status='paused';locationState.view=view;saveUi();render()}));

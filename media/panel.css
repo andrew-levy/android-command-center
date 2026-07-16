@@ -91,31 +91,6 @@ main {
   background-position: 7px 7px;
 }
 
-.skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px 12px;
-}
-.skeleton-card {
-  height: 138px;
-  border-radius: var(--radius);
-  background: linear-gradient(
-    100deg,
-    var(--faint) 25%,
-    var(--hover) 42%,
-    var(--faint) 59%
-  );
-  background-size: 300% 100%;
-  animation: shimmer 1.35s infinite;
-}
-.skeleton-card.hero {
-  height: 36px;
-}
-.skeleton-card.short {
-  height: 92px;
-}
-
 /* ---------- Shared controls ---------- */
 .primary,
 .secondary,
@@ -1235,10 +1210,6 @@ details.toolchain summary {
 }
 
 /* ---------- Database inspector ---------- */
-.db-tables {
-  max-height: 72px;
-  overflow: auto;
-}
 textarea#db-sql {
   width: 100%;
   min-height: 78px;
@@ -1327,6 +1298,25 @@ textarea#db-sql:focus {
 }
 
 /* ---------- Overlays ---------- */
+.loading-toast {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--vscode-notifications-background, var(--deep));
+  box-shadow: 0 8px 28px var(--shadow);
+  color: var(--vscode-notifications-foreground, var(--text));
+  font-size: 10px;
+  backdrop-filter: blur(12px);
+  animation: toast-in 0.16s ease-out;
+}
 .error-toast {
   position: fixed;
   top: 8px;
@@ -1414,14 +1404,6 @@ textarea#db-sql:focus {
   50% {
     opacity: 0.45;
     box-shadow: none;
-  }
-}
-@keyframes shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
   }
 }
 @keyframes toast-in {

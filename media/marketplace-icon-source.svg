@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Android Command Center">
   <defs>
-    <linearGradient id="background" x1="32" y1="24" x2="224" y2="232" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#162235"/>
-      <stop offset="1" stop-color="#08111f"/>
+    <linearGradient id="background" x1="18" y1="18" x2="238" y2="238" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8af4c9"/>
+      <stop offset="1" stop-color="#24d7bb"/>
     </linearGradient>
-    <linearGradient id="accent" x1="72" y1="72" x2="184" y2="194" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#9cf5cf"/>
-      <stop offset="1" stop-color="#4adea7"/>
+    <linearGradient id="robot" x1="54" y1="48" x2="202" y2="210" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#13213a"/>
+      <stop offset="1" stop-color="#071225"/>
     </linearGradient>
   </defs>
-  <rect width="256" height="256" rx="52" fill="url(#background)"/>
-  <path d="M78 98h100c13.3 0 24 10.7 24 24v65H54v-65c0-13.3 10.7-24 24-24Z" fill="none" stroke="url(#accent)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M84 98c0-24.3 19.7-44 44-44s44 19.7 44 44M96 61 82 39M160 61l14-22M88 138h.1M168 138h.1M84 187v28M172 187v28M54 124H32v48h22M202 124h22v48h-22" fill="none" stroke="url(#accent)" stroke-width="14" stroke-linecap="round"/>
-  <circle cx="88" cy="138" r="7" fill="#9cf5cf"/>
-  <circle cx="168" cy="138" r="7" fill="#9cf5cf"/>
+  <rect width="256" height="256" fill="url(#background)"/>
+  <path d="M78 98h100c13.3 0 24 10.7 24 24v65H54v-65c0-13.3 10.7-24 24-24Z" fill="none" stroke="url(#robot)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M84 98c0-24.3 19.7-44 44-44s44 19.7 44 44M96 61 82 39M160 61l14-22M84 187v28M172 187v28M54 124H32v48h22M202 124h22v48h-22" fill="none" stroke="url(#robot)" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="88" cy="138" r="7" fill="#0b1830"/>
+  <circle cx="168" cy="138" r="7" fill="#0b1830"/>
 </svg>

@@ -2,12 +2,12 @@
   "name": "android-cli-panel",
   "displayName": "Android Command Center",
   "description": "Build, run, inspect, and control Android apps without leaving VS Code or Cursor.",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "publisher": "andrew-levy",
   "license": "MIT",
   "icon": "media/marketplace-icon.png",
   "galleryBanner": {
-    "color": "#0b1220",
+    "color": "#58e7bd",
     "theme": "dark"
   },
   "pricing": "Free",
@@ -121,6 +121,7 @@
     "@types/node": "20.17.10",
     "@types/vscode": "1.96.0",
     "@vscode/vsce": "^3.2.1",
+    "ovsx": "1.0.2",
     "typescript": "^5.7.2"
   }
 }

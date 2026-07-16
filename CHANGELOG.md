@@ -2,6 +2,13 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.6 - 2026-07-16
+
+### Changed
+
+- Replaced the marketplace icon with a full-bleed mint design without rounded white corners.
+- Updated the marketplace banner color to match the new icon.
+
 ## 0.1.5 - 2026-07-16
 
 Initial public preview release.

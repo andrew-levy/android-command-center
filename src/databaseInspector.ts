@@ -52,10 +52,10 @@ export class DatabaseInspector {
     return { ...this.state };
   }
 
-  async refreshProcesses(serial: string, preferredPackage?: string): Promise<DatabaseInspectorState> {
+  async refreshProcesses(serial: string, preferredPackage?: string, thorough = true): Promise<DatabaseInspectorState> {
     this.state.serial = serial;
     this.state.error = undefined;
-    const processes = await listDebuggableProcesses(this.adb(), serial, preferredPackage);
+    const processes = await listDebuggableProcesses(this.adb(), serial, preferredPackage, thorough);
     this.state.processes = processes;
     if (!processes.some((item) => item.packageName === this.state.packageName)) {
       this.state.packageName = preferredPackage && processes.some((item) => item.packageName === preferredPackage)
@@ -278,7 +278,12 @@ export class DatabaseInspector {
   }
 }
 
-async function listDebuggableProcesses(adbPath: string, serial: string, preferredPackage?: string): Promise<DbProcess[]> {
+async function listDebuggableProcesses(
+  adbPath: string,
+  serial: string,
+  preferredPackage?: string,
+  thorough = true,
+): Promise<DbProcess[]> {
   const [packagesOutput, processesOutput] = await Promise.all([
     adb(adbPath, serial, ['shell', 'pm', 'list', 'packages', '-3']).catch(() => ''),
     adb(adbPath, serial, ['shell', 'ps', '-A', '-o', 'NAME']).catch(() => ''),
@@ -305,8 +310,10 @@ async function listDebuggableProcesses(adbPath: string, serial: string, preferre
       return Number(running.has(b)) - Number(running.has(a)) || a.localeCompare(b);
     });
 
-  const checks = await mapLimit(candidates.slice(0, 80), 8, async (packageName) => {
-    const debuggable = await isDebuggable(adbPath, serial, packageName);
+  const likely = candidates.filter((packageName) => packageName === preferredPackage || running.has(packageName));
+  const scanCandidates = thorough ? candidates.slice(0, 80) : (likely.length ? likely.slice(0, 12) : candidates.slice(0, 12));
+  const checks = await mapLimit(scanCandidates, thorough ? 8 : 6, async (packageName) => {
+    const debuggable = await isDebuggable(adbPath, serial, packageName, thorough ? 8_000 : 2_500);
     if (!debuggable) return undefined;
     return {
       packageName,
@@ -317,9 +324,9 @@ async function listDebuggableProcesses(adbPath: string, serial: string, preferre
   return checks.filter((item): item is DbProcess => Boolean(item));
 }
 
-async function isDebuggable(adbPath: string, serial: string, packageName: string): Promise<boolean> {
+async function isDebuggable(adbPath: string, serial: string, packageName: string, timeout: number): Promise<boolean> {
   try {
-    await adb(adbPath, serial, ['shell', 'run-as', packageName, 'id'], 8_000);
+    await adb(adbPath, serial, ['shell', 'run-as', packageName, 'id'], timeout);
     return true;
   } catch {
     return false;

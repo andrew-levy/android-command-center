@@ -21,6 +21,7 @@ const VARIANT_KEY = 'androidCli.selectedVariant.v1';
 const RECENT_LINKS_KEY = 'androidCli.recentDeepLinks.v1';
 const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
 const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
+const REFRESH_CHECK_TIMEOUT_MS = 12_000;
 const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
 const SUCCESS_HOLD_MS = 2_000;
@@ -52,9 +53,12 @@ type DashboardState = {
   applicationId?: string;
   database: DatabaseInspectorState;
   appPackages: string[];
+  appPackagesSerial?: string;
   selectedAppPackage?: string;
   appDataMessage?: string;
   initializing?: boolean;
+  databaseScanning?: boolean;
+  appPackagesScanning?: boolean;
   busy?: string;
   error?: string;
   screenshot?: string;
@@ -82,6 +86,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   private state: DashboardState;
   private devicePoll?: NodeJS.Timeout;
   private pollingDevices = false;
+  private autoScannedSerial?: string;
   private operationSequence = 0;
   private readonly databases: DatabaseInspector;
 
@@ -108,8 +113,9 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       favoriteDeepLinks: context.workspaceState.get<string[]>(FAVORITE_LINKS_KEY) ?? [],
       database: emptyDatabaseState(),
       appPackages: cached?.appPackages ?? [],
+      appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
-      initializing: !cached,
+      initializing: true,
       testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
   }
@@ -136,6 +142,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       this.state.devices = devices;
       this.persistCache();
       this.render();
+      void this.autoScanSections(false);
     } catch {
       // A temporary ADB failure should not replace the last known device list.
     } finally {
@@ -144,7 +151,8 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   async refresh(discoverProject = false): Promise<void> {
-    this.state.busy = 'Refreshing…';
+    const initialLoad = Boolean(this.state.initializing);
+    this.state.busy = initialLoad ? undefined : 'Refreshing…';
     this.state.error = undefined;
     this.state.cliStatus = 'checking';
     this.state.adbStatus = 'checking';
@@ -152,14 +160,17 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     this.render();
     const root = firstRoot();
     const shouldDiscover = Boolean(root && (discoverProject || !this.state.variants.length));
-    const [cliVersion, info, adbVersion, sqliteVersion, devices, emulators, variants] = await Promise.allSettled([
-      run(cli(), ['--version']),
-      run(cli(), ['info']),
-      run(adb(), ['version']),
-      run(sqlite(), ['-version']),
-      run(adb(), ['devices', '-l']),
-      run(cli(), ['emulator', 'list']),
-      shouldDiscover && root ? discoverVariants(root) : Promise.resolve(this.state.variants),
+    if (!this.state.variants.length) {
+      this.applyVariants([variantFromTask(config().get<string>('gradleTask', 'assembleDebug'))]);
+    }
+    const variantDiscovery = shouldDiscover && root ? this.discoverProjectVariants(root) : undefined;
+    const [cliVersion, info, adbVersion, sqliteVersion, devices, emulators] = await Promise.allSettled([
+      run(cli(), ['--version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      run(cli(), ['info'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      run(adb(), ['version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      run(sqlite(), ['-version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      run(adb(), ['devices', '-l'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      run(cli(), ['emulator', 'list'], undefined, REFRESH_CHECK_TIMEOUT_MS),
     ]);
     this.state.cliAvailable = cliVersion.status === 'fulfilled';
     this.state.cliStatus = cliVersion.status === 'rejected'
@@ -185,13 +196,41 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     this.state.devices = devices.status === 'fulfilled' ? await enrichDevices(parseDevices(devices.value)) : this.state.devices;
     this.state.emulators = emulators.status === 'fulfilled'
       ? emulators.value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : this.state.emulators;
-    if (variants.status === 'fulfilled' && variants.value.length) this.applyVariants(variants.value);
-    else if (!this.state.variants.length) this.applyVariants([variantFromTask(config().get<string>('gradleTask', 'assembleDebug'))]);
-    this.state.initializing = false;
-    this.state.busy = undefined;
-    if (root) await this.refreshDeepLinks(root);
+    if (!initialLoad && variantDiscovery) await variantDiscovery;
+    if (root) {
+      try { await this.refreshDeepLinks(root); }
+      catch { /* Project metadata is optional and should not block the panel. */ }
+    }
     this.persistCache();
     this.render();
+    await this.autoScanSections(true);
+    this.state.initializing = false;
+    this.state.busy = undefined;
+    this.persistCache();
+    this.render();
+  }
+
+  private async discoverProjectVariants(root: vscode.Uri): Promise<void> {
+    try {
+      const variants = await discoverVariants(root);
+      if (variants.length) this.applyVariants(variants);
+      await this.refreshDeepLinks(root);
+      this.persistCache();
+      this.render();
+    } catch {
+      // Gradle discovery can be slow or unavailable. The configured default is
+      // already usable, so keep it rather than holding the whole UI hostage.
+    }
+  }
+
+  private async autoScanSections(force: boolean): Promise<void> {
+    const serial = this.state.devices.find((device) => device.state === 'device')?.serial;
+    if (!serial || this.state.adbStatus !== 'ready') return;
+    if (!force && serial === this.autoScannedSerial) return;
+    this.autoScannedSerial = serial;
+    const scans: Promise<void>[] = [this.autoRefreshAppPackages(serial)];
+    if (this.state.sqliteStatus === 'ready') scans.push(this.autoRefreshDatabase(serial));
+    await Promise.allSettled(scans);
   }
 
   private async handle(message: { type?: string; [key: string]: unknown }): Promise<void> {
@@ -420,10 +459,23 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     if (!serial) throw new Error('Connect or start an Android device first.');
     this.state.database = await this.busy(
       'Scanning debuggable apps…',
-      () => this.databases.refreshProcesses(serial, this.state.applicationId),
+      () => this.databases.refreshProcesses(serial, this.state.applicationId, true),
       'db-refresh',
       'Database inspector ready',
     );
+  }
+
+  private async autoRefreshDatabase(serial: string): Promise<void> {
+    this.state.databaseScanning = true;
+    this.render();
+    try {
+      this.state.database = await this.databases.refreshProcesses(serial, this.state.applicationId, false);
+    } catch (error) {
+      this.state.database = { ...this.databases.snapshot(), error: messageOf(error) };
+    } finally {
+      this.state.databaseScanning = false;
+      this.render();
+    }
   }
 
   private async dbSelectPackage(packageName: string): Promise<void> {
@@ -483,32 +535,48 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   private async refreshAppPackages(serialHint = ''): Promise<void> {
     const serial = serialHint || await this.chooseDevice();
     if (!serial) throw new Error('Connect or start an Android device first.');
-    await this.busy('Listing installed apps…', async () => {
-      const packages = await listInstalledPackages(serial);
-      if (this.state.applicationId && !packages.includes(this.state.applicationId)) {
-        try {
-          await run(adb(), ['-s', serial, 'shell', 'pm', 'path', this.state.applicationId]);
-          packages.unshift(this.state.applicationId);
-        } catch {
-          // Project applicationId is not installed on this device yet.
-        }
+    await this.busy('Listing installed apps…', () => this.loadAppPackages(serial), 'app-packages', 'Apps loaded');
+  }
+
+  private async autoRefreshAppPackages(serial: string): Promise<void> {
+    this.state.appPackagesScanning = true;
+    this.render();
+    try {
+      await this.loadAppPackages(serial);
+    } catch (error) {
+      this.state.appDataMessage = `Could not refresh installed apps: ${messageOf(error)}`;
+    } finally {
+      this.state.appPackagesScanning = false;
+      this.render();
+    }
+  }
+
+  private async loadAppPackages(serial: string): Promise<void> {
+    const packages = await listInstalledPackages(serial);
+    if (this.state.applicationId && !packages.includes(this.state.applicationId)) {
+      try {
+        await run(adb(), ['-s', serial, 'shell', 'pm', 'path', this.state.applicationId]);
+        packages.unshift(this.state.applicationId);
+      } catch {
+        // Project applicationId is not installed on this device yet.
       }
-      this.state.appPackages = packages;
-      const preferred = this.state.selectedAppPackage || this.state.applicationId;
-      if (preferred && packages.includes(preferred)) this.state.selectedAppPackage = preferred;
-      else if (!this.state.selectedAppPackage || !packages.includes(this.state.selectedAppPackage)) {
-        this.state.selectedAppPackage = this.state.applicationId && packages.includes(this.state.applicationId)
-          ? this.state.applicationId
-          : packages[0];
-      }
-      if (this.state.selectedAppPackage) {
-        await this.context.workspaceState.update(APP_PACKAGE_KEY, this.state.selectedAppPackage);
-      }
-      this.state.appDataMessage = packages.length
-        ? `${packages.length} installed app${packages.length === 1 ? '' : 's'}`
-        : 'No third-party packages found';
-      this.persistCache();
-    }, 'app-packages', 'Apps loaded');
+    }
+    this.state.appPackages = packages;
+    this.state.appPackagesSerial = serial;
+    const preferred = this.state.selectedAppPackage || this.state.applicationId;
+    if (preferred && packages.includes(preferred)) this.state.selectedAppPackage = preferred;
+    else if (!this.state.selectedAppPackage || !packages.includes(this.state.selectedAppPackage)) {
+      this.state.selectedAppPackage = this.state.applicationId && packages.includes(this.state.applicationId)
+        ? this.state.applicationId
+        : packages[0];
+    }
+    if (this.state.selectedAppPackage) {
+      await this.context.workspaceState.update(APP_PACKAGE_KEY, this.state.selectedAppPackage);
+    }
+    this.state.appDataMessage = packages.length
+      ? `${packages.length} installed app${packages.length === 1 ? '' : 's'}`
+      : 'No third-party packages found';
+    this.persistCache();
   }
 
   private async selectAppPackage(packageName: string): Promise<void> {
@@ -687,7 +755,20 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private persistCache(): void {
-    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, database: _database, appDataMessage: _appDataMessage, testOpenSections: _testOpenSections, ...cache } = this.state;
+    const {
+      busy: _busy,
+      error: _error,
+      screenshot: _screenshot,
+      linkResult: _result,
+      operation: _operation,
+      database: _database,
+      appDataMessage: _appDataMessage,
+      initializing: _initializing,
+      databaseScanning: _databaseScanning,
+      appPackagesScanning: _appPackagesScanning,
+      testOpenSections: _testOpenSections,
+      ...cache
+    } = this.state;
     void this.context.workspaceState.update(CACHE_KEY, cache);
   }
 
@@ -846,8 +927,10 @@ async function enrichDevices(devices: Device[]): Promise<Device[]> {
   return Promise.all(devices.map(async (device) => {
     if (device.state !== 'device') return device;
     const [avdResult, themeResult] = await Promise.allSettled([
-      device.serial.startsWith('emulator-') ? run(adb(), ['-s', device.serial, 'emu', 'avd', 'name']) : Promise.resolve(''),
-      run(adb(), ['-s', device.serial, 'shell', 'cmd', 'uimode', 'night']),
+      device.serial.startsWith('emulator-')
+        ? run(adb(), ['-s', device.serial, 'emu', 'avd', 'name'], undefined, 5_000)
+        : Promise.resolve(''),
+      run(adb(), ['-s', device.serial, 'shell', 'cmd', 'uimode', 'night'], undefined, 5_000),
     ]);
     const avdName = avdResult.status === 'fulfilled'
       ? avdResult.value.split(/\r?\n/).map((line) => line.trim()).find((line) => line && line !== 'OK')
@@ -889,5 +972,5 @@ function html(webview: vscode.Webview): string {
   const world = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'world-land.js'));
   const logic = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'panel-logic.js'));
   const script = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'panel.js'));
-  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};"><link rel="stylesheet" href="${css}"></head><body><main id="app"><div class="skeleton"><div class="skeleton-card hero"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card short"></div></div></main><script nonce="${nonce}" src="${world}"></script><script nonce="${nonce}" src="${logic}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
+  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};"><link rel="stylesheet" href="${css}"></head><body><main id="app"></main><script nonce="${nonce}" src="${world}"></script><script nonce="${nonce}" src="${logic}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
 }

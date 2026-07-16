@@ -14,9 +14,25 @@ test('Section state survives backend rerenders without forcing Toolchain open', 
   assert.equal(realTools?.env?.ANDROID_CLI_TEST_OPEN_SECTIONS, undefined);
 });
 
-test('Database renders a reachable scan action and targets the selected database device', () => {
-  assert.match(panel, /actionButton\('db-refresh','Scan'/);
+test('Database renders a reachable refresh action and targets the selected database device', () => {
+  assert.match(panel, /actionButton\('db-refresh','Refresh'/);
   assert.match(panel, /action==='db-refresh'\)send\('db-refresh',\{serial:document\.getElementById\('db-device'\)\?\.value\|\|''\}\)/);
+});
+
+test('Initial load renders the real UI with a loading toast instead of a skeleton', () => {
+  assert.match(panel, /render\(\);\s*send\('ready'\)/);
+  assert.match(panel, /class="loading-toast"/);
+  assert.doesNotMatch(panel, /class="skeleton/);
+  assert.doesNotMatch(extension, /class="skeleton/);
+});
+
+test('Database tables use a select and Database and App Data auto scan', () => {
+  assert.match(panel, /selectWrap\('db-table',tableOptions/);
+  assert.match(panel, /getElementById\('db-table'\)\?\.addEventListener\('change'/);
+  assert.doesNotMatch(panel, /data-db-table/);
+  assert.match(extension, /await this\.autoScanSections\(true\)/);
+  assert.match(extension, /this\.autoRefreshAppPackages\(serial\)/);
+  assert.match(extension, /this\.autoRefreshDatabase\(serial\)/);
 });
 
 test('Database renders one result message instead of repeating the row count', () => {
@@ -50,5 +66,5 @@ test('Canceling the APK picker exits without reporting launch success', () => {
 test('SQLite is configurable and represented in toolchain state', () => {
   assert.equal(manifest.contributes.configuration.properties['androidCli.sqliteExecutable'].default, 'sqlite3');
   assert.match(panel, /dependencyRow\('SQLite',state\.sqliteStatus,state\.sqliteVersion,state\.sqliteMessage\)/);
-  assert.match(extension, /run\(sqlite\(\), \['-version'\]\)/);
+  assert.match(extension, /run\(sqlite\(\), \['-version'\], undefined, REFRESH_CHECK_TIMEOUT_MS\)/);
 });
