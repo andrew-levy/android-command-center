@@ -40,9 +40,10 @@ function render(){
  const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
  const inspector=inspectorSection(cliReady);
  const database=databaseSection(deviceOptions,adbReady);
+ const appData=appDataSection(deviceOptions,adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady))));
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+toolchainSection()+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+locationSection(locationOptions,adbReady)+stream;
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+toolchainSection()+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+appData+locationSection(locationOptions,adbReady)+stream;
  bind();
 }
 
@@ -139,6 +140,25 @@ function databaseResult(result,table){
  return '<div class="db-result"><div class="db-result-meta">'+esc(result.message||(rows.length+' row(s)'))+'</div><div class="db-table-wrap"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
 }
 
+function appDataSection(deviceOptions,adbReady){
+ const packages=state.appPackages||[];
+ const selected=state.selectedAppPackage||state.applicationId||'';
+ const status=selected?selected.split('.').slice(-1)[0]:'Pick an app';
+ const packageOptions=packages.length
+  ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selected?' selected':'')+'>'+esc(name)+'</option>').join('')
+  :(selected?'<option value="'+esc(selected)+'" selected>'+esc(selected)+'</option>':'<option value="">Scan installed apps</option>');
+ const disabled=!adbReady||!selected;
+ const body=group(
+  row('Device',selectWrap('app-device',deviceOptions,{label:'App data device'}))
+  +row('Package',selectWrap('app-package',packageOptions,{disabled:!packages.length&&!selected,label:'Installed package'}))
+  +row('Scan installed apps',actionButton('app-packages','Scan','secondary compact',!adbReady))
+  +row('Force stop',actionButton('app-force-stop','Stop','secondary compact',disabled))
+  +row('Clear cache',actionButton('app-clear-cache','Clear','secondary compact',disabled))
+  +row('Clear storage',actionButton('app-clear-data','Clear','danger compact',disabled))
+ )+(state.appDataMessage?'<div class="app-data-message">'+esc(state.appDataMessage)+'</div>':'');
+ return section('appdata','App data',status,body);
+}
+
 function deepLinkSection(deviceOptions,adbReady){
  const prefixes=state.deepLinkPrefixes||[],favorites=state.favoriteDeepLinks||[],recent=state.recentDeepLinks||[];
  const suggestions=[...new Set([...prefixes,...favorites,...recent])];
@@ -176,8 +196,9 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
+ document.getElementById('app-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});
  document.getElementById('deeplink-uri')?.addEventListener('keydown',(e)=>{if(e.key!=='Enter')return;const button=document.getElementById('open-deeplink');if(button&&!button.disabled)button.click()});
  document.getElementById('open-deeplink')?.addEventListener('click',()=>{const input=document.getElementById('deeplink-uri');deepLinkDraft=input.value;send('deeplink-open',{uri:deepLinkDraft,serial:document.getElementById('deeplink-device')?.value||''})});
