@@ -2,16 +2,143 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Android Command Center",
+      "name": "Run Android Command Center — real tools",
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"
       ],
       "outFiles": [
         "${workspaceFolder}/dist/**/*.js"
       ],
       "preLaunchTask": "npm: compile"
+    },
+    {
+      "name": "Run ACC — fake healthy",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "healthy",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — CLI missing",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/not-installed-android",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "healthy",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — ADB missing",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/not-installed-adb",
+        "ANDROID_CLI_FAKE_SCENARIO": "healthy",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — CLI environment error",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "cli-info-error",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — no devices",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "no-devices",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — offline device",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "offline-device",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — unauthorized device",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "unauthorized-device",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — multiple devices",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "multiple-devices",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
+    },
+    {
+      "name": "Run ACC — command failures",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--folder-uri=file:///Users/andrewlevy/Documents/AndroidCliTestApp"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: compile",
+      "env": {
+        "ANDROID_CLI_TEST_CLI": "${workspaceFolder}/test/fixtures/fake-tools/android.cjs",
+        "ANDROID_CLI_TEST_ADB": "${workspaceFolder}/test/fixtures/fake-tools/adb.cjs",
+        "ANDROID_CLI_FAKE_SCENARIO": "command-error",
+        "ANDROID_CLI_TEST_OPEN_SECTIONS": "toolchain"
+      }
     }
   ]
 }

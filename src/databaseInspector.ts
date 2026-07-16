@@ -44,6 +44,7 @@ export class DatabaseInspector {
 
   constructor(
     private readonly adb: () => string,
+    private readonly sqlite: () => string,
     private readonly workspaceRoot: () => string | undefined,
   ) {}
 
@@ -115,7 +116,7 @@ export class DatabaseInspector {
     this.state.query = query;
     this.state.error = undefined;
     const mutating = isMutatingSql(query);
-    const result = await runSqlite(this.requireLocal(), query, !mutating);
+    const result = await runSqlite(this.sqlite(), this.requireLocal(), query, !mutating);
     this.state.result = result;
     if (mutating) {
       this.state.dirty = true;
@@ -132,7 +133,7 @@ export class DatabaseInspector {
     if (!table || !rowid || !column || column === '__rowid__') throw new Error('Pick an editable cell first.');
     await this.ensureLocal();
     const sql = `UPDATE ${quoteIdent(table)} SET ${quoteIdent(column)} = ${sqlLiteral(value)} WHERE rowid = ${Number(rowid)};`;
-    const result = await runSqlite(this.requireLocal(), sql, false);
+    const result = await runSqlite(this.sqlite(), this.requireLocal(), sql, false);
     this.state.dirty = true;
     this.state.query = sql;
     await this.push();
@@ -159,9 +160,10 @@ export class DatabaseInspector {
     const packageName = this.requirePackage();
     const database = this.requireDatabase();
     const local = this.requireLocal();
-    await runSqlite(local, 'PRAGMA wal_checkpoint(TRUNCATE);', false);
+    await checkpointDatabase(this.sqlite(), local);
     await removeSiblingWal(local);
     await pushDatabase(this.adb(), serial, packageName, database, local);
+    await prepareLocalDatabase(this.sqlite(), local);
     this.state.dirty = false;
     this.state.message = `Pushed ${database} to ${packageName}`;
     return this.snapshot();
@@ -197,8 +199,7 @@ export class DatabaseInspector {
     const database = this.requireDatabase();
     const local = await this.localFileFor(packageName, database);
     await pullDatabase(this.adb(), serial, packageName, database, local);
-    await runSqlite(local, 'PRAGMA wal_checkpoint(TRUNCATE);', false).catch(() => undefined);
-    await removeSiblingWal(local);
+    await prepareLocalDatabase(this.sqlite(), local);
     this.state.localPath = local;
     this.state.dirty = false;
   }
@@ -206,6 +207,7 @@ export class DatabaseInspector {
   private async loadTables(): Promise<void> {
     const local = this.requireLocal();
     const listed = await runSqlite(
+      this.sqlite(),
       local,
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;",
       true,
@@ -220,6 +222,7 @@ export class DatabaseInspector {
     const local = this.requireLocal();
     this.state.selectedTable = table;
     const result = await runSqlite(
+      this.sqlite(),
       local,
       `SELECT rowid AS __rowid__, * FROM ${quoteIdent(table)} LIMIT ${ROW_LIMIT};`,
       true,
@@ -360,7 +363,7 @@ async function pullDatabase(
   localPath: string,
 ): Promise<void> {
   await fsp.mkdir(path.dirname(localPath), { recursive: true });
-  for (const suffix of ['', '-wal', '-shm']) {
+  for (const suffix of ['', '-wal']) {
     const remote = `databases/${database}${suffix}`;
     const target = `${localPath}${suffix}`;
     try {
@@ -395,22 +398,22 @@ async function pushDatabase(
   await adb(adbPath, serial, ['shell', 'run-as', packageName, 'rm', '-f', `${remote}-wal`, `${remote}-shm`]).catch(() => undefined);
 }
 
-async function runSqlite(databasePath: string, sql: string, expectRows: boolean): Promise<DbQueryResult> {
+async function runSqlite(sqlitePath: string, databasePath: string, sql: string, expectRows: boolean): Promise<DbQueryResult> {
   if (expectRows || looksLikeQuery(sql)) {
-    const { stdout } = await execFileAsync('sqlite3', ['-json', '-readonly', databasePath, withLimit(sql)], {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 20_000,
-    }).catch(async (error) => {
-      // Mutating statements or older sqlite may reject -readonly; retry without it for writes only.
-      if (expectRows) throw error;
-      return execFileAsync('sqlite3', ['-json', databasePath, sql], { maxBuffer: 10 * 1024 * 1024, timeout: 20_000 });
-    });
-    return parseJsonRows(stdout, sql);
+    try {
+      const { stdout } = await execFileAsync(sqlitePath, ['-json', '-readonly', databasePath, withLimit(sql)], {
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 20_000,
+      });
+      return parseJsonRows(stdout, sql);
+    } catch (error) {
+      throw sqliteError(error, sqlitePath);
+    }
   }
 
   const changesSql = `BEGIN; ${sql.replace(/;?\s*$/, '')}; SELECT changes() AS changes; COMMIT;`;
   try {
-    const { stdout } = await execFileAsync('sqlite3', ['-json', databasePath, changesSql], {
+    const { stdout } = await execFileAsync(sqlitePath, ['-json', databasePath, changesSql], {
       maxBuffer: 2 * 1024 * 1024,
       timeout: 20_000,
     });
@@ -418,10 +421,48 @@ async function runSqlite(databasePath: string, sql: string, expectRows: boolean)
     const changes = Number(parsed.rows[0]?.[0] ?? 0);
     return { columns: [], rows: [], changes, message: `${changes} change(s)` };
   } catch (error) {
+    if (isMissingExecutable(error)) throw sqliteError(error, sqlitePath);
     // Fallback for statements that cannot run inside an explicit transaction batch.
-    await execFileAsync('sqlite3', [databasePath, sql], { maxBuffer: 2 * 1024 * 1024, timeout: 20_000 });
-    return { columns: [], rows: [], changes: 0, message: 'Statement executed' };
+    try {
+      await execFileAsync(sqlitePath, [databasePath, sql], { maxBuffer: 2 * 1024 * 1024, timeout: 20_000 });
+      return { columns: [], rows: [], changes: 0, message: 'Statement executed' };
+    } catch (fallbackError) {
+      throw sqliteError(fallbackError, sqlitePath);
+    }
   }
+}
+
+export async function prepareLocalDatabase(sqlitePath: string, databasePath: string): Promise<void> {
+  // A device's shared-memory file contains process-local locks and cannot be
+  // reused safely. Rebuild it locally, preserving the WAL long enough to merge
+  // any committed pages into the main database.
+  await fsp.rm(`${databasePath}-shm`, { force: true });
+  await fsp.writeFile(`${databasePath}-wal`, Buffer.alloc(0), { flag: 'a' });
+  await checkpointDatabase(sqlitePath, databasePath);
+}
+
+async function checkpointDatabase(sqlitePath: string, databasePath: string): Promise<void> {
+  try {
+    await execFileAsync(sqlitePath, [databasePath, 'PRAGMA wal_checkpoint(TRUNCATE);'], {
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 20_000,
+    });
+  } catch (error) {
+    throw sqliteError(error, sqlitePath);
+  }
+}
+
+function sqliteError(error: unknown, sqlitePath: string): Error {
+  if (isMissingExecutable(error)) {
+    return new Error(`SQLite executable not found: ${sqlitePath}. Install SQLite 3 or set androidCli.sqliteExecutable.`);
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function isMissingExecutable(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+  const message = error instanceof Error ? error.message : String(error);
+  return code === 'ENOENT' || /\bENOENT\b|not found|not recognized/i.test(message);
 }
 
 function parseJsonRows(stdout: string, sql: string): DbQueryResult {
@@ -448,7 +489,7 @@ function parseJsonRows(stdout: string, sql: string): DbQueryResult {
   };
 }
 
-function withLimit(sql: string): string {
+export function withLimit(sql: string): string {
   if (/^\s*(select|with)\b/i.test(sql) && !/\blimit\s+\d+/i.test(sql)) {
     return `${sql.replace(/;?\s*$/, '')} LIMIT ${ROW_LIMIT};`;
   }
@@ -459,16 +500,16 @@ function looksLikeQuery(sql: string): boolean {
   return /^\s*(select|with|pragma\s+table_info|pragma\s+database_list)\b/i.test(sql);
 }
 
-function isMutatingSql(sql: string): boolean {
+export function isMutatingSql(sql: string): boolean {
   return /^\s*(insert|update|delete|replace|create|drop|alter|attach|detach|reindex|vacuum|analyze)\b/i.test(sql);
 }
 
-function quoteIdent(value: string): string {
+export function quoteIdent(value: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`Unsafe SQL identifier: ${value}`);
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function sqlLiteral(value: string | null): string {
+export function sqlLiteral(value: string | null): string {
   if (value === null) return 'NULL';
   return `'${value.replaceAll("'", "''")}'`;
 }

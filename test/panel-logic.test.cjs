@@ -1,0 +1,34 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  buildAvailability,
+  canPlayRoute,
+  parseCoords,
+  restoreOpenSections,
+} = require('../media/panel-logic.js');
+
+test('parseCoords accepts boundaries and rejects incomplete or out-of-range values', () => {
+  assert.deepEqual(parseCoords('0, -180'), {lat: 0, lng: -180});
+  assert.deepEqual(parseCoords('90 180'), {lat: 90, lng: 180});
+  assert.equal(parseCoords('91, 0'), null);
+  assert.equal(parseCoords('37.4'), null);
+  assert.equal(parseCoords('north, west'), null);
+});
+
+test('saved sections migrate old ids and reset obsolete defaults', () => {
+  assert.deepEqual(restoreOpenSections({uiVersion: 2, openSections: ['project', 'database']}, 2), ['build', 'database']);
+  assert.deepEqual(restoreOpenSections({uiVersion: 1, openSections: ['device', 'toolchain', 'database']}, 2), ['database']);
+  assert.deepEqual(restoreOpenSections({}, 2), ['build']);
+});
+
+test('Gradle-only actions remain available without Android CLI', () => {
+  assert.deepEqual(buildAvailability(false), {run: false, clean: true, sync: true});
+});
+
+test('route playback requires ADB and an emulator serial', () => {
+  assert.equal(canPlayRoute(true, 'emulator-5554'), true);
+  assert.equal(canPlayRoute(true, ''), false);
+  assert.equal(canPlayRoute(true, 'physical-123'), false);
+  assert.equal(canPlayRoute(false, 'emulator-5554'), false);
+});

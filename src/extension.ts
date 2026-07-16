@@ -5,6 +5,15 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } from './databaseInspector';
+import {
+  isCompleteDeepLink,
+  isMissingExecutable,
+  parseDevices,
+  summarizeAdb,
+  variantFromTask,
+  type BuildVariant,
+  type Device,
+} from './core';
 
 const execFileAsync = promisify(execFile);
 const CACHE_KEY = 'androidCli.dashboardCache.v1';
@@ -12,11 +21,13 @@ const VARIANT_KEY = 'androidCli.selectedVariant.v1';
 const RECENT_LINKS_KEY = 'androidCli.recentDeepLinks.v1';
 const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
 const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
+const MIN_BUSY_MS = 2_000;
+const SUCCESS_ENTER_MS = 220;
+const SUCCESS_HOLD_MS = 2_000;
+const SUCCESS_EXIT_MS = 180;
 
-type Device = { serial: string; state: string; description: string; avdName?: string; theme?: 'light' | 'dark' | 'auto' };
-type BuildVariant = { id: string; label: string; name: string; module?: string; task: string };
 type LinkResult = { ok: boolean; message: string };
-type Operation = { id: string; status: 'running' | 'success' | 'error'; message: string };
+type Operation = { id: string; status: 'running' | 'success' | 'success-exit' | 'error'; message: string };
 type DependencyStatus = 'checking' | 'ready' | 'missing' | 'error';
 type DashboardState = {
   cliAvailable: boolean;
@@ -26,6 +37,9 @@ type DashboardState = {
   adbStatus: DependencyStatus;
   adbVersion?: string;
   adbMessage?: string;
+  sqliteStatus: DependencyStatus;
+  sqliteVersion?: string;
+  sqliteMessage?: string;
   environment: string;
   sdk?: string;
   devices: Device[];
@@ -46,6 +60,7 @@ type DashboardState = {
   screenshot?: string;
   linkResult?: LinkResult;
   operation?: Operation;
+  testOpenSections?: string[];
 };
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -67,17 +82,20 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   private state: DashboardState;
   private devicePoll?: NodeJS.Timeout;
   private pollingDevices = false;
+  private operationSequence = 0;
   private readonly databases: DatabaseInspector;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
-    this.databases = new DatabaseInspector(adb, () => firstRoot()?.fsPath);
+    this.databases = new DatabaseInspector(adb, sqlite, () => firstRoot()?.fsPath);
     this.state = {
       cliAvailable: cached?.cliAvailable ?? false,
       cliStatus: 'checking',
       cliVersion: cached?.cliVersion,
       adbStatus: 'checking',
       adbVersion: cached?.adbVersion,
+      sqliteStatus: 'checking',
+      sqliteVersion: cached?.sqliteVersion,
       environment: environmentLabel(),
       sdk: cached?.sdk,
       devices: cached?.devices ?? [],
@@ -92,6 +110,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       appPackages: cached?.appPackages ?? [],
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
       initializing: !cached,
+      testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
   }
 
@@ -129,13 +148,15 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     this.state.error = undefined;
     this.state.cliStatus = 'checking';
     this.state.adbStatus = 'checking';
+    this.state.sqliteStatus = 'checking';
     this.render();
     const root = firstRoot();
     const shouldDiscover = Boolean(root && (discoverProject || !this.state.variants.length));
-    const [cliVersion, info, adbVersion, devices, emulators, variants] = await Promise.allSettled([
+    const [cliVersion, info, adbVersion, sqliteVersion, devices, emulators, variants] = await Promise.allSettled([
       run(cli(), ['--version']),
       run(cli(), ['info']),
       run(adb(), ['version']),
+      run(sqlite(), ['-version']),
       run(adb(), ['devices', '-l']),
       run(cli(), ['emulator', 'list']),
       shouldDiscover && root ? discoverVariants(root) : Promise.resolve(this.state.variants),
@@ -152,6 +173,14 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       ? 'ready' : isMissingExecutable(adbVersion.reason) ? 'missing' : 'error';
     this.state.adbVersion = adbVersion.status === 'fulfilled' ? firstLine(adbVersion.value) : undefined;
     this.state.adbMessage = adbVersion.status === 'rejected' ? messageOf(adbVersion.reason) : undefined;
+    this.state.sqliteStatus = sqliteVersion.status === 'fulfilled'
+      ? 'ready' : isMissingExecutable(sqliteVersion.reason) ? 'missing' : 'error';
+    this.state.sqliteVersion = sqliteVersion.status === 'fulfilled' ? firstLine(sqliteVersion.value) : undefined;
+    this.state.sqliteMessage = sqliteVersion.status === 'rejected'
+      ? (isMissingExecutable(sqliteVersion.reason)
+        ? 'SQLite 3 is required for Database inspection. Install sqlite3 or choose its executable.'
+        : messageOf(sqliteVersion.reason))
+      : undefined;
     this.state.sdk = info.status === 'fulfilled' ? info.value.trim() : this.state.sdk;
     this.state.devices = devices.status === 'fulfilled' ? await enrichDevices(parseDevices(devices.value)) : this.state.devices;
     this.state.emulators = emulators.status === 'fulfilled'
@@ -175,10 +204,11 @@ class DashboardProvider implements vscode.WebviewViewProvider {
         case 'dependency-install-adb': this.prepareInstallAdb(); return;
         case 'dependency-choose-cli': await this.chooseExecutable('executable', 'Choose the Android CLI executable'); return;
         case 'dependency-choose-adb': await this.chooseExecutable('adbExecutable', 'Choose the adb executable'); return;
+        case 'dependency-choose-sqlite': await this.chooseExecutable('sqliteExecutable', 'Choose the sqlite3 executable'); return;
         case 'dependency-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'Android Command Center'); return;
         case 'error-dismiss': this.state.error = undefined; this.render(); return;
         case 'variant': await this.selectVariant(String(message.id)); return;
-        case 'build': await this.build(); return;
+        case 'gradle-sync': await this.gradleSync(); return;
         case 'build-run': await this.buildAndRun(); return;
         case 'clean': await this.clean(); return;
         case 'deeplink-open': await this.openDeepLink(String(message.uri), String(message.serial ?? '')); return;
@@ -211,6 +241,12 @@ class DashboardProvider implements vscode.WebviewViewProvider {
         case 'app-force-stop': await this.forceStopApp(String(message.serial ?? ''), String(message.packageName ?? '')); return;
       }
     } catch (error) {
+      if (error instanceof UserCancelledError) {
+        this.state.error = undefined;
+        this.state.busy = undefined;
+        this.render();
+        return;
+      }
       this.state.error = messageOf(error);
       this.state.busy = undefined;
       this.render();
@@ -241,11 +277,12 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     this.render();
   }
 
-  private async build(): Promise<void> {
+  private async gradleSync(): Promise<void> {
     const root = requireRoot();
-    await this.busy('Building app…', async () => {
-      if (!await this.runGradleTask(root, this.selectedVariant().task, 'Android Build')) throw new Error('Android build failed. Check the build terminal for details.');
-    }, 'build', 'Build succeeded');
+    await this.busy('Syncing Gradle project…', async () => {
+      const args = ['help', '--refresh-dependencies', '--console=plain'];
+      if (!await this.runGradle(root, args, 'Gradle Sync', 'gradle-sync')) throw new Error('Gradle sync failed. Check the Gradle Sync terminal for details.');
+    }, 'gradle-sync', 'Gradle sync succeeded');
   }
 
   private async clean(): Promise<void> {
@@ -272,7 +309,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       files.map((uri) => ({ label: vscode.workspace.asRelativePath(uri), uri })),
       { placeHolder: `Choose a ${variant.label} APK to deploy` },
     ).then((x) => x?.uri);
-    if (!picked) return;
+    if (!picked) throw new UserCancelledError();
     const device = await this.chooseDevice();
     const args = ['run', `--apks=${picked.fsPath}`, ...(device ? [`--device=${device}`] : [])];
     if (!await this.runProcessTask('Android Run', cli(), args)) throw new Error('Android run failed. Check the Android Run terminal for details.');
@@ -280,7 +317,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
 
   private async openDeepLink(uri: string, serial: string): Promise<void> {
     uri = uri.trim();
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) throw new Error('Enter a complete deeplink such as myapp://profile/42.');
+    if (!isCompleteDeepLink(uri)) throw new Error('Enter a complete deeplink such as myapp://profile/42.');
     const device = serial || await this.chooseDevice();
     if (!device) throw new Error('Connect or start an Android device first.');
     const args = ['-s', device, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', uri];
@@ -554,7 +591,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     void vscode.window.showInformationMessage('The platform-tools install command is ready in the terminal. Review it, then press Enter to run it.');
   }
 
-  private async chooseExecutable(setting: 'executable' | 'adbExecutable', title: string): Promise<void> {
+  private async chooseExecutable(setting: 'executable' | 'adbExecutable' | 'sqliteExecutable', title: string): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
       title,
       canSelectFiles: true,
@@ -568,7 +605,11 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private async runGradleTask(root: vscode.Uri, gradleTask: string, name = 'Build & Run'): Promise<boolean> {
-    return this.runProcessTask(name, gradleWrapper(root), [gradleTask], root.fsPath, gradleTask);
+    return this.runGradle(root, [gradleTask], name, gradleTask);
+  }
+
+  private async runGradle(root: vscode.Uri, args: string[], name: string, taskId: string): Promise<boolean> {
+    return this.runProcessTask(name, gradleWrapper(root), args, root.fsPath, taskId);
   }
 
   private async runProcessTask(name: string, executablePath: string, args: string[], cwd?: string, taskId = name): Promise<boolean> {
@@ -595,25 +636,58 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private async busy<T>(label: string, action: () => Promise<T>, id = 'busy', success = 'Done'): Promise<T> {
+    const startedAt = Date.now();
+    const sequence = ++this.operationSequence;
     this.state.busy = label;
     this.state.operation = { id, status: 'running', message: label };
     this.state.error = undefined;
     this.render();
     try {
       const result = await action();
-      this.state.operation = { id, status: 'success', message: success };
+      await this.waitForMinimumBusyTime(startedAt);
+      if (sequence === this.operationSequence) this.showOperationSuccess(id, success);
       return result;
     } catch (error) {
-      this.state.operation = { id, status: 'error', message: messageOf(error) };
+      if (error instanceof UserCancelledError) {
+        if (sequence === this.operationSequence) this.state.operation = undefined;
+        throw error;
+      }
+      await this.waitForMinimumBusyTime(startedAt);
+      if (sequence === this.operationSequence) {
+        this.state.operation = { id, status: 'error', message: messageOf(error) };
+      }
       throw error;
     } finally {
-      this.state.busy = undefined;
-      this.render();
+      if (sequence === this.operationSequence) {
+        this.state.busy = undefined;
+        this.render();
+      }
     }
   }
 
+  private async waitForMinimumBusyTime(startedAt: number): Promise<void> {
+    const remaining = MIN_BUSY_MS - (Date.now() - startedAt);
+    if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+  }
+
+  private showOperationSuccess(id: string, message: string): void {
+    const success: Operation = { id, status: 'success', message };
+    this.state.operation = success;
+    setTimeout(() => {
+      if (this.state.operation !== success) return;
+      const exiting: Operation = { ...success, status: 'success-exit' };
+      this.state.operation = exiting;
+      this.render();
+      setTimeout(() => {
+        if (this.state.operation !== exiting) return;
+        this.state.operation = undefined;
+        this.render();
+      }, SUCCESS_EXIT_MS);
+    }, SUCCESS_ENTER_MS + SUCCESS_HOLD_MS);
+  }
+
   private persistCache(): void {
-    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, database: _database, appDataMessage: _appDataMessage, ...cache } = this.state;
+    const { busy: _busy, error: _error, screenshot: _screenshot, linkResult: _result, operation: _operation, database: _database, appDataMessage: _appDataMessage, testOpenSections: _testOpenSections, ...cache } = this.state;
     void this.context.workspaceState.update(CACHE_KEY, cache);
   }
 
@@ -622,11 +696,15 @@ class DashboardProvider implements vscode.WebviewViewProvider {
 
 function config(): vscode.WorkspaceConfiguration { return vscode.workspace.getConfiguration('androidCli'); }
 function cli(): string {
+  const testExecutable = process.env.ANDROID_CLI_TEST_CLI?.trim();
+  if (testExecutable) return testExecutable;
   const configured = config().get<string>('executable', 'android');
   if (configured !== 'android') return configured;
   return firstExisting([path.join(os.homedir(), '.local', 'bin', 'android')]) ?? configured;
 }
 function adb(): string {
+  const testExecutable = process.env.ANDROID_CLI_TEST_ADB?.trim();
+  if (testExecutable) return testExecutable;
   const configured = config().get<string>('adbExecutable', 'adb');
   if (configured !== 'adb') return configured;
   const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -634,6 +712,11 @@ function adb(): string {
     ...(sdk ? [path.join(sdk, 'platform-tools', executable('adb'))] : []),
     path.join(os.homedir(), 'Library', 'Android', 'sdk', 'platform-tools', executable('adb')),
   ]) ?? configured;
+}
+function sqlite(): string {
+  const testExecutable = process.env.ANDROID_CLI_TEST_SQLITE?.trim();
+  if (testExecutable) return testExecutable;
+  return config().get<string>('sqliteExecutable', 'sqlite3');
 }
 function executable(name: string): string { return process.platform === 'win32' ? `${name}.exe` : name; }
 function environmentLabel(): string {
@@ -671,11 +754,6 @@ function firstLine(value: string): string | undefined {
   return value.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
 }
 
-function isMissingExecutable(error: unknown): boolean {
-  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
-  return code === 'ENOENT' || /\bENOENT\b|not found|not recognized/i.test(messageOf(error));
-}
-
 async function discoverVariants(root: vscode.Uri): Promise<BuildVariant[]> {
   const wrapper = gradleWrapper(root);
   const output = await run(wrapper, ['tasks', '--all', '--console=plain'], root.fsPath, 90_000);
@@ -693,16 +771,6 @@ async function discoverVariants(root: vscode.Uri): Promise<BuildVariant[]> {
     variants.set(configured.id, configured);
   }
   return [...variants.values()].sort((a, b) => Number(/release$/i.test(a.name)) - Number(/release$/i.test(b.name)) || a.label.localeCompare(b.label));
-}
-
-function variantFromTask(task: string, explicitName?: string): BuildVariant {
-  const clean = task.replace(/^:/, '');
-  const parts = clean.split(':');
-  const simpleTask = parts.pop() ?? task;
-  const module = parts.join(':') || undefined;
-  const suffix = simpleTask.replace(/^assemble/, '') || 'Debug';
-  const name = explicitName ?? suffix[0].toLowerCase() + suffix.slice(1);
-  return { id: task, task, name, module, label: module ? `${module} · ${name}` : name };
 }
 
 async function findVariantApks(variant: BuildVariant): Promise<vscode.Uri[]> {
@@ -774,13 +842,6 @@ function normalize(value: string): string { return value.toLowerCase().replace(/
 function unique<T>(values: T[]): T[] { return [...new Set(values)]; }
 function isString(value: string | undefined): value is string { return Boolean(value); }
 
-function parseDevices(output: string): Device[] {
-  return output.split(/\r?\n/).slice(1).filter(Boolean).map((line) => {
-    const [serial, state, ...details] = line.trim().split(/\s+/);
-    const model = details.find((item) => item.startsWith('model:'))?.slice(6)?.replaceAll('_', ' ');
-    return { serial, state, description: model ? `${model} · ${serial}` : serial };
-  });
-}
 async function enrichDevices(devices: Device[]): Promise<Device[]> {
   return Promise.all(devices.map(async (device) => {
     if (device.state !== 'device') return device;
@@ -802,10 +863,6 @@ async function enrichDevices(devices: Device[]): Promise<Device[]> {
     };
   }));
 }
-function summarizeAdb(output: string): string {
-  return output.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(Status|Activity):/i.test(line)) ?? '';
-}
-
 async function listInstalledPackages(serial: string): Promise<string[]> {
   const output = await run(adb(), ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3']);
   return unique(
@@ -822,9 +879,15 @@ function shellQuote(value: string): string {
 }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
+class UserCancelledError extends Error {
+  constructor() { super('Canceled'); }
+}
+
 function html(webview: vscode.Webview): string {
   const nonce = Math.random().toString(36).slice(2);
   const css = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'panel.css'));
+  const world = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'world-land.js'));
+  const logic = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'panel-logic.js'));
   const script = webview.asWebviewUri(vscode.Uri.joinPath(vscode.Uri.file(__dirname), '..', 'media', 'panel.js'));
-  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};"><link rel="stylesheet" href="${css}"></head><body><main id="app"><div class="skeleton"><div class="skeleton-card hero"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card short"></div></div></main><script nonce="${nonce}" src="${script}"></script></body></html>`;
+  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};"><link rel="stylesheet" href="${css}"></head><body><main id="app"><div class="skeleton"><div class="skeleton-card hero"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card short"></div></div></main><script nonce="${nonce}" src="${world}"></script><script nonce="${nonce}" src="${logic}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
 }

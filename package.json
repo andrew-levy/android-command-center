@@ -40,10 +40,15 @@
           "default": "adb",
           "description": "Path to adb in the extension-host environment."
         },
+        "androidCli.sqliteExecutable": {
+          "type": "string",
+          "default": "sqlite3",
+          "description": "Path to the SQLite 3 command-line executable used by Database inspection."
+        },
         "androidCli.gradleTask": {
           "type": "string",
           "default": "assembleDebug",
-          "description": "Gradle task used by Build."
+          "description": "Default Gradle assemble task used by Run."
         },
         "androidCli.apkGlob": {
           "type": "string",
@@ -62,6 +67,7 @@
   "scripts": {
     "compile": "tsc -p . && npm run check:webview",
     "check:webview": "node scripts/check-webview.cjs",
+    "test": "npm run compile && node --test test/*.test.cjs",
     "watch": "tsc -w -p .",
     "package": "vsce package"
   },
