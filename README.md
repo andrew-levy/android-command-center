@@ -4,6 +4,15 @@ A Cursor/VS Code activity-bar panel for everyday Android development without ope
 
 > Android Command Center is currently a preview release. Please report unexpected behavior through the project issue tracker.
 
+## In action
+
+<p align="center">
+  <img src="media/screenshots/build-dashboard.png" alt="Android Command Center build dashboard showing variant, run, clean, and Gradle sync controls" width="47%" />
+  <img src="media/screenshots/location-route.png" alt="Android Command Center location route simulator with an emulator target and route controls" width="47%" />
+</p>
+
+<p align="center"><em>Build, run, and maintain your project — then simulate location routes without leaving the editor.</em></p>
+
 ## Quick start
 
 1. Install the extension and open an Android project in VS Code or Cursor.
