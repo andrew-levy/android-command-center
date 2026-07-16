@@ -8,21 +8,23 @@ Android Command Center uses the tools installed in the environment where its VS 
 
 - Android CLI for running apps, emulators, screenshots, and layout inspection
 - Android SDK platform tools (`adb`) for connected devices, deeplinks, logcat, themes, and location simulation
-- A project Gradle wrapper (`gradlew` or `gradlew.bat`) for Build and Clean
+- A project Gradle wrapper (`gradlew` or `gradlew.bat`) for Sync, Run, and Clean
+- SQLite 3 (`sqlite3`) for Database inspection
 
-The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable` and `androidCli.adbExecutable` to absolute paths.
+The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths.
 
 ## MVP features
 
 - Detect the Android CLI, SDK, connected devices, and virtual devices
 - Build and run in one click, matching Android Studio's Run flow: build, install, and launch
-- Select discovered Gradle build variants, run standalone builds, or clean the project
+- Select discovered Gradle build variants, sync dependencies, run apps, or clean the project
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
 - See available and connected devices together, start or stop emulators independently, and switch device light/dark mode
 - Capture normal or annotated screenshots and preview them in the editor
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
+- Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device
 - Clear app cache or storage and force-stop installed packages on a connected device
 
 The extension deliberately does not wrap `android studio ...` commands: those require a running Android Studio instance. Kotlin language intelligence should be supplied by a VS Code language-server extension.
@@ -34,7 +36,9 @@ npm install
 npm run compile
 ```
 
-Open this repository as a folder in Cursor, select **Run and Debug → Run Android Command Center**, and press `F5`. A second Cursor window opens as the Extension Development Host; open the Android icon in that window's activity bar. If `F5` is captured by macOS, use **Run → Start Debugging** or `fn`+`F5`.
+Open this repository as a folder in Cursor, select **Run and Debug → Run Android Command Center — real tools**, and press `F5`. A second Cursor window opens as the Extension Development Host with `AndroidCliTestApp`; open the Android icon in that window's activity bar. If `F5` is captured by macOS, use **Run → Start Debugging** or `fn`+`F5`.
+
+For automated checks, real-emulator journeys, and deterministic missing-tool/device scenarios, see [TESTING.md](TESTING.md). The complete release matrix is in [TEST_PLAN.md](TEST_PLAN.md), and failures are tracked in [BUGS.md](BUGS.md).
 
 ## Architecture
 
@@ -47,3 +51,14 @@ The webview is presentation-only. Extension-host code invokes the CLI with argum
 3. Add Journey authoring/running and test result views.
 4. Add device actions (rotation, permissions, recordings).
 5. Expose stable VS Code commands so agents and tasks can trigger the same workflows.
+
+## Database inspector
+
+Inspect SQLite / Room databases for **debuggable** apps without Android Studio:
+
+1. Open the **Database** section and choose a device.
+2. **Scan apps** to list packages that allow `run-as` (debug builds).
+3. Pick a process and database, browse tables, run SQL, or click a cell to edit.
+4. Mutating statements and cell edits are applied locally then **pushed** back to the device. Use **Push** if you need to retry a write.
+
+Working copies live under `.android-cli/databases/` in the workspace. If the app already has the DB open, force-stop or relaunch it after a push so it reloads from disk.
