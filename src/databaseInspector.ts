@@ -32,6 +32,7 @@ export type DatabaseInspectorState = {
 };
 
 const ROW_LIMIT = 200;
+const SQLITE_HEADER = Buffer.from('SQLite format 3\0', 'binary');
 
 export function emptyDatabaseState(): DatabaseInspectorState {
   return { processes: [], databases: [], tables: [], query: '', dirty: false };
@@ -323,16 +324,32 @@ async function isDebuggable(adbPath: string, serial: string, packageName: string
 }
 
 async function listDatabases(adbPath: string, serial: string, packageName: string): Promise<string[]> {
-  const output = await adb(adbPath, serial, ['shell', 'run-as', packageName, 'ls', 'databases']).catch(async () => {
-    // Some apps keep DBs under files/; still prefer databases/.
-    return adb(adbPath, serial, ['shell', 'run-as', packageName, 'sh', '-c', 'ls databases 2>/dev/null || true']);
-  });
-  return unique(
+  const output = await adb(adbPath, serial, ['shell', 'run-as', packageName, 'ls', 'databases']).catch(() => '');
+  const candidates = unique(
     output
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((name) => name && !name.endsWith('-wal') && !name.endsWith('-shm') && !name.endsWith('-journal') && !name.includes('/')),
   );
+  const checks = await mapLimit(candidates, 8, async (name) => {
+    try {
+      const header = await adbBinary(adbPath, serial, [
+        'exec-out',
+        'run-as',
+        packageName,
+        'head',
+        '-c',
+        String(SQLITE_HEADER.length),
+        `databases/${name}`,
+      ]);
+      return hasSqliteHeader(header) ? name : undefined;
+    } catch {
+      // `ls databases` may include directories and arbitrary app files. Neither
+      // can be queried by sqlite3, so omit them instead of failing the scan.
+      return undefined;
+    }
+  });
+  return checks.filter((name): name is string => Boolean(name));
 }
 
 async function pullDatabase(
@@ -348,6 +365,10 @@ async function pullDatabase(
     const target = `${localPath}${suffix}`;
     try {
       const buffer = await adbBinary(adbPath, serial, ['exec-out', 'run-as', packageName, 'cat', remote]);
+      if (!suffix && !hasSqliteHeader(buffer)) {
+        await fsp.rm(target, { force: true });
+        throw new Error(`${database} is not a readable SQLite database.`);
+      }
       if (!buffer.length && suffix) {
         await fsp.rm(target, { force: true });
         continue;
@@ -458,6 +479,11 @@ function shellSingleQuote(value: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function hasSqliteHeader(buffer: Buffer): boolean {
+  return buffer.length >= SQLITE_HEADER.length
+    && buffer.subarray(0, SQLITE_HEADER.length).equals(SQLITE_HEADER);
 }
 
 async function removeSiblingWal(databasePath: string): Promise<void> {

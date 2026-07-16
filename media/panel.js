@@ -7,7 +7,7 @@ const savedSections=savedUi.openSections?.map((id)=>id==='project'?'build':id);
 let openSections=new Set(savedSections||['build','device']);
 let deepLinkDraft=savedUi.deepLinkDraft||'';
 let sqlDraft=savedUi.sqlDraft||'';
-let locationState={trail:0,mode:'walk',multiplier:1,status:'idle',arc:0,elapsed:0,angle:0,last:0,lastPush:0,serial:'',error:'',latitude:'',longitude:''};
+let locationState={trail:0,mode:'walk',multiplier:1,status:'idle',arc:0,elapsed:0,angle:0,last:0,lastPush:0,serial:'',error:'',coords:''};
 const trails=[
  {name:'Apple Park Loop',description:'A gentle loop around Apple Park',mode:'walk',loop:true,waypoints:[[37.33272,-122.00833,49],[37.33373,-122.00663,49],[37.33540,-122.00633,49],[37.33675,-122.00759,45],[37.33698,-122.00969,48],[37.33598,-122.01138,49],[37.33431,-122.01169,50],[37.33296,-122.01042,51]]},
  {name:'Golden Gate',description:'Bridge deck round trip with elevation',mode:'run',loop:true,waypoints:[[37.83212,-122.48065,30],[37.82649,-122.47940,30],[37.82074,-122.47873,59],[37.81498,-122.47806,66],[37.80923,-122.47734,44],[37.81498,-122.47795,66],[37.82074,-122.47865,59],[37.82649,-122.47935,30]]},
@@ -18,7 +18,11 @@ const send=(type,extra={})=>vscode.postMessage({type,...extra});
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const saveUi=()=>vscode.setState?.({deepLinkDraft,sqlDraft,openSections:[...openSections]});
 const section=(id,title,status,body)=>'<details class="tool-section" data-section="'+id+'"'+(openSections.has(id)?' open':'')+'><summary><span class="section-title">'+title+'</span><span class="section-status">'+status+'</span>'+chevron+'</summary><div class="section-body">'+body+'</div></details>';
+const group=(rows)=>'<div class="settings-group">'+rows+'</div>';
+const row=(label,controls,labelClass='')=>'<div class="row"><span class="row-label'+(labelClass?' '+labelClass:'')+'">'+label+'</span><span class="row-controls">'+controls+'</span></div>';
+const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span class="select-wrap"><select id="'+id+'"'+(disabled?' disabled':'')+(label?' aria-label="'+esc(label)+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+options+'</select></span>';
 const actionButton=(id,label,kind='pill',disabled=false)=>{const op=state.operation?.id===id?state.operation:null;const running=op?.status==='running';const icon=running?'<span class="spinner"></span>':op?.status==='success'?'<span class="action-result success">✓</span>':op?.status==='error'?'<span class="action-result error">!</span>':'';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+icon+'<span>'+esc(running?op.message:label)+'</span></button>'};
+const parseCoords=(value)=>{const parts=String(value??'').trim().split(/[,\s]+/).filter(Boolean);if(parts.length!==2)return null;const lat=Number(parts[0]),lng=Number(parts[1]);return Number.isFinite(lat)&&Number.isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180?{lat,lng}:null};
 
 window.addEventListener('message',({data})=>{if(data.type==='state'){state=data.state;if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;render()}if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}});
 send('ready');
@@ -27,7 +31,7 @@ function render(){
  if(state.initializing){app.innerHTML='<div class="skeleton"><div class="skeleton-card hero"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card short"></div></div>';return}
  const devices=state.devices||[],online=devices.filter((d)=>d.state==='device'),locationDevices=online.filter((d)=>d.serial.startsWith('emulator-')),avds=state.emulators||[];
  if(!locationDevices.some((d)=>d.serial===locationState.serial))locationState.serial=locationDevices[0]?.serial||'';
- const deviceOptions=online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join('');
+ const deviceOptions=online.length?online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">No device online</option>';
  const locationOptions=locationDevices.length?locationDevices.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">Start an emulator first</option>';
  const variants=state.variants||[],selected=state.selectedVariant||variants[0]?.id||'';
  const cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready';
@@ -36,46 +40,49 @@ function render(){
  const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
  const inspector=inspectorSection(cliReady);
  const database=databaseSection(deviceOptions,adbReady);
- const stream=section('stream','Stream','Logcat','<p class="muted">Follow live device logs in the integrated terminal.</p>'+actionButton('logcat','Start log stream','primary block',!adbReady));
+ const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady))));
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
- const allReady=state.cliStatus==='ready'&&state.adbStatus==='ready';
- const setup=allReady?'':setupCard();
- const footer=allReady?toolchainFooter():'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+setup+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+locationSection(locationOptions,adbReady)+stream+footer;
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+errorToast+toolchainSection()+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+locationSection(locationOptions,adbReady)+stream;
  bind();
 }
 
-function toolchainFooter(){
- const detail=[state.cliVersion,state.adbVersion].filter(Boolean).join('\n')||'Android toolchain ready';
- return '<footer class="toolchain-footer" aria-label="Android toolchain ready"><span class="status-dot on" aria-hidden="true"></span><span title="'+esc(detail)+'">Toolchain ready</span><span class="toolchain-env" title="'+esc(state.environment||'extension host')+'">'+esc(state.environment||'extension host')+'</span><span class="toolchain-spacer"></span><button class="icon-button" data-setup="dependency-settings" title="Android Command Center settings" aria-label="Open Android Command Center settings">⌘</button><button class="icon-button" data-setup="dependency-retry" title="Check toolchain again" aria-label="Check toolchain again">↻</button></footer>';
-}
-
-function setupCard(){
- const cli=dependencyRow('Android CLI',state.cliStatus,state.cliVersion,state.cliMessage);
- const adb=dependencyRow('Platform tools',state.adbStatus,state.adbVersion,state.adbMessage);
+function toolchainSection(){
+ const cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready';
+ const allReady=cliReady&&adbReady;
+ const checking=state.cliStatus==='checking'||state.adbStatus==='checking';
+ const open=!allReady||openSections.has('toolchain');
+ const dot=allReady?' on':checking?' checking':' err';
+ const label=allReady?'Toolchain ready':checking?'Checking toolchain…':'Finish setup';
+ const environment=state.environment||'extension host';
+ const rows='<div class="dependency-list">'+dependencyRow('Android CLI',state.cliStatus,state.cliVersion,state.cliMessage)+dependencyRow('Platform tools',state.adbStatus,state.adbVersion,state.adbMessage)+'</div>';
  const cliAction=state.cliStatus==='missing'
-  ? '<button class="primary" data-setup="dependency-install-cli">Prepare install</button><button class="secondary" data-setup="dependency-choose-cli">Choose file…</button>'
-  : state.cliStatus==='error'
-   ? '<button class="primary" data-setup="dependency-choose-cli">Choose file…</button><button class="secondary" data-setup="dependency-settings">Open settings</button>' : '';
- const adbAction=state.cliStatus==='ready'&&state.adbStatus==='missing'
-  ? '<button class="primary" data-setup="dependency-install-adb">Prepare platform tools</button><button class="secondary" data-setup="dependency-choose-adb">Choose adb…</button>'
-  : state.adbStatus==='error'
-   ? '<button class="secondary" data-setup="dependency-choose-adb">Choose adb…</button>' : '';
+  ?'<button class="primary" data-setup="dependency-install-cli">Prepare install</button><button class="secondary" data-setup="dependency-choose-cli">Choose file…</button>'
+  :state.cliStatus==='error'?'<button class="primary" data-setup="dependency-choose-cli">Choose file…</button>':'';
+ const adbAction=cliReady&&state.adbStatus==='missing'
+  ?'<button class="primary" data-setup="dependency-install-adb">Prepare platform tools</button><button class="secondary" data-setup="dependency-choose-adb">Choose adb…</button>'
+  :state.adbStatus==='error'?'<button class="secondary" data-setup="dependency-choose-adb">Choose adb…</button>':'';
  const actions=cliAction||adbAction;
- return '<section class="setup-card" aria-label="Android tool setup"><div class="setup-head"><h2>'+(state.cliStatus==='missing'?'Connect Android CLI':'Finish Android setup')+'</h2><p>Uses tools installed in this development environment · '+esc(state.environment||'extension host')+'</p></div><div class="dependency-list">'+cli+adb+'</div>'+(actions?'<div class="setup-actions">'+actions+'</div>':'')+'<button class="setup-retry" data-setup="dependency-retry"'+(state.cliStatus==='checking'||state.adbStatus==='checking'?' disabled':'')+'><span aria-hidden="true">↻</span> Check again</button></section>';
-}
-
-function buildSection(variants,selected,cliReady){
- const active=variants.find((variant)=>variant.id===selected),label=active?.label||'Default target';
- const options=variants.map((variant)=>'<option value="'+esc(variant.id)+'"'+(variant.id===selected?' selected':'')+'>'+esc(variant.label)+'</option>').join('');
- const body='<div class="field"><label class="caption" for="build-variant">Build variant</label><select id="build-variant" title="'+esc(label)+'">'+options+'</select></div><div class="build-row">'+actionButton('build-run','Run app','primary',!cliReady)+actionButton('build','Build','secondary',!cliReady)+actionButton('clean','Clean','secondary',!cliReady)+'</div>';
- return section('build','Build',label,body);
+ const textActions='<div class="toolchain-actions"><button class="text-button" data-setup="dependency-settings">Settings</button><button class="text-button" data-setup="dependency-retry"'+(checking?' disabled':'')+'>Check again</button></div>';
+ return '<details class="toolchain" data-section="toolchain"'+(open?' open':'')+' aria-label="Android toolchain"><summary><span class="status-dot'+dot+'" aria-hidden="true"></span><span class="toolchain-label">'+label+'</span><span class="toolchain-env" title="'+esc(environment)+'">'+esc(environment)+'</span>'+chevron+'</summary><div class="section-body">'+rows+(actions?'<div class="setup-actions">'+actions+'</div>':'')+textActions+'</div></details>';
 }
 
 function dependencyRow(name,status,version,message){
  const label={checking:'Checking…',ready:'Ready',missing:'Not found',error:'Needs attention'}[status]||'Unknown';
  const detail=status==='ready'?(version||'Available'):status==='checking'?'Looking in PATH and settings':message||'Choose an executable or install it';
- return '<div class="dependency-row '+esc(status)+'"><span class="dependency-icon" aria-hidden="true">'+(status==='ready'?'✓':status==='checking'?'<span class="spinner"></span>':'!')+'</span><span class="dependency-copy"><strong>'+esc(name)+'</strong><span title="'+esc(detail)+'">'+esc(detail)+'</span></span><span class="dependency-state">'+esc(label)+'</span></div>';
+ const dot=status==='ready'?' on':status==='checking'?' checking':' err';
+ return '<div class="dependency-row '+esc(status)+'"><span class="status-dot'+dot+'" aria-hidden="true"></span><span class="dependency-copy"><strong>'+esc(name)+'</strong><span title="'+esc(detail)+'">'+esc(detail)+'</span></span><span class="dependency-state">'+esc(label)+'</span></div>';
+}
+
+function buildSection(variants,selected,cliReady){
+ const active=variants.find((variant)=>variant.id===selected),label=active?.label||'Default target';
+ const options=variants.map((variant)=>'<option value="'+esc(variant.id)+'"'+(variant.id===selected?' selected':'')+'>'+esc(variant.label)+'</option>').join('');
+ const body=group(
+  row('Variant',selectWrap('build-variant',options,{label:'Build variant',title:label}))
+  +row('Run app',actionButton('build-run','Run','primary compact',!cliReady))
+  +row('Build',actionButton('build','Build','secondary compact',!cliReady))
+  +row('Clean',actionButton('clean','Clean','secondary compact',!cliReady))
+ );
+ return section('build','Build',esc(label),body);
 }
 
 function deviceGrid(devices,avds){
@@ -83,14 +90,14 @@ function deviceGrid(devices,avds){
  const avdCards=avds.map((name)=>{const running=devices.find((d)=>d.avdName===name);if(running)used.add(running.serial);return deviceCard({name,device:running,virtual:true})});
  const connectedCards=devices.filter((d)=>!used.has(d.serial)).map((device)=>deviceCard({name:device.description,device,virtual:device.serial.startsWith('emulator-')}));
  const cards=[...avdCards,...connectedCards];
- return '<p class="muted device-help">All available emulators and connected hardware appear here. Start or stop each one independently.</p><div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card">No devices or emulators found</div>')+'</div>';
+ return '<div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card">No devices or emulators found</div>')+'</div>';
 }
 
 function deviceCard({name,device,virtual}){const online=device?.state==='device',id=device?.serial||name,op=state.operation?.id===`device:${id}`?state.operation:null,running=op?.status==='running',cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready';const loading=running?'<span class="spinner" aria-hidden="true"></span>':'';const action=online&&virtual?'<button class="pill danger-button device-action-button" data-stop="'+esc(device.serial)+'"'+(running||!adbReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+loading+'<span>'+(running?'Stopping…':'Stop')+'</span></button>':!online&&virtual?'<button class="pill device-action-button" data-start="'+esc(name)+'"'+(running||!cliReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+loading+'<span>'+(running?'Starting…':'Start')+'</span></button>':'';const theme=online?'<div class="theme-toggle" aria-label="Device appearance"><button data-theme="light" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='light'?'active':'')+'" title="Use light mode"'+(adbReady?'':' disabled')+'>☀</button><button data-theme="dark" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='dark'?'active':'')+'" title="Use dark mode"'+(adbReady?'':' disabled')+'>☾</button></div>':'';return '<article class="device-card '+(online?'online':'')+'"><div class="device-card-head"><div class="device-icon">'+(virtual?'▯':'▰')+'</div><span class="status-dot '+(online?'on':'')+'"></span></div><strong title="'+esc(name)+'">'+esc(name.replaceAll('_',' '))+'</strong><span class="device-meta">'+esc(device?.serial||(virtual?'Available emulator':'Connected device'))+'</span><div class="device-actions">'+theme+action+'</div></article>'}
 
 function inspectorAction(id,icon,title,description,disabled=false){const op=state.operation?.id===id?state.operation:null,running=op?.status==='running';return '<button class="inspector-tile" data-action="'+id+'" title="'+esc(description)+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'><span class="inspector-tile-icon" aria-hidden="true">'+(running?'<span class="spinner"></span>':op?.status==='success'?'<span class="action-result success">✓</span>':op?.status==='error'?'<span class="action-result error">!</span>':icon)+'</span><span>'+esc(title)+'</span></button>'}
 
-function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><div class="inspector-preview-bar"><span><i></i><i></i><i></i></span><span>Latest capture</span></div><div class="inspector-preview-screen"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"></div></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">⌗</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?'Capture ready':cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','◎','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','✦','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','⌁','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
+function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">⌗</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?'Capture ready':cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','◎','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','✦','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','⌁','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
 
 function databaseSection(deviceOptions,adbReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
@@ -103,8 +110,17 @@ function databaseSection(deviceOptions,adbReady){
  const dbOptions=(db.databases||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedDatabase?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No databases</option>';
  const tableChips=(db.tables||[]).map((name)=>'<button class="chip'+(name===db.selectedTable?' active':'')+'" data-db-table="'+esc(name)+'">'+esc(name)+'</button>').join('')||'<p class="muted">No user tables in this database.</p>';
  const result=db.result?databaseResult(db.result,db.selectedTable):'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
- const controls='<div class="field"><label class="caption" for="db-device">Device</label><select id="db-device">'+deviceOptions+'</select></div><div class="field"><label class="caption" for="db-package">Process</label><select id="db-package"'+(processes.length?'':' disabled')+'>'+processOptions+'</select></div><div class="db-toolbar">'+actionButton('db-refresh','Scan apps','secondary',!adbReady)+actionButton('db-push','Push','secondary',!db.dirty)+'</div><div class="field"><label class="caption" for="db-database">Database</label><select id="db-database"'+(db.databases?.length?'':' disabled')+'>'+dbOptions+'</select></div><div class="micro-heading"><span>Tables</span><span>'+(db.tables?.length||0)+'</span></div><div class="chip-row db-tables">'+tableChips+'</div><div class="field"><label class="caption" for="db-sql">SQL</label><textarea id="db-sql" rows="4" spellcheck="false" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea></div><div class="db-toolbar">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+'</div>'+(db.message?'<div class="db-message">'+esc(db.message)+'</div>':'')+(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result;
- return section('database','Database',status,controls);
+ const scanning=state.operation?.id==='db-refresh'&&state.operation.status==='running';
+ const scan='<button class="icon-button" data-action="db-refresh" title="Scan debuggable apps" aria-label="Scan debuggable apps"'+(scanning||!adbReady?' disabled':'')+(scanning?' aria-busy="true"':'')+'>'+(scanning?'<span class="spinner"></span>':'↻')+'</button>';
+ const controls=group(
+   row('Device',selectWrap('db-device',deviceOptions,{label:'Database device'})+scan)
+   +row('App',selectWrap('db-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}))
+   +row('Database',selectWrap('db-database',dbOptions,{disabled:!(db.databases?.length),label:'Database'}))
+  )+'<div class="micro-heading"><span>Tables</span><span>'+(db.tables?.length||0)+'</span></div><div class="chip-row db-tables">'+tableChips+'</div>'
+  +'<textarea id="db-sql" rows="4" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea>'
+  +'<div class="action-strip">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+actionButton('db-push','Push','secondary',!db.dirty)+'</div>'
+  +(db.message?'<div class="db-message">'+esc(db.message)+'</div>':'')+(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result;
+ return section('database','Database',esc(status),controls);
 }
 
 function databaseResult(result,table){
@@ -129,22 +145,41 @@ function deepLinkSection(deviceOptions,adbReady){
  const prefixChips=prefixes.length?'<div class="chip-row">'+prefixes.map((uri)=>'<button class="chip" data-link="'+esc(uri)+'">'+esc(uri)+'</button>').join('')+'</div>':'<p class="muted">Build once to discover schemes from the selected variant.</p>';
  const favoriteRows=linkRows(favorites,true),draftFavorite=favorites.includes(deepLinkDraft);
  const recentRows=linkRows(recent.filter((uri)=>!favorites.includes(uri)),false);
+ const launching=state.operation?.id==='deeplink'&&state.operation.status==='running';
+ const command='<div class="command-line"><span class="command-prompt" aria-hidden="true">❯</span><input id="deeplink-uri" list="deeplink-suggestions" value="'+esc(deepLinkDraft)+'" placeholder="myapp://path" spellcheck="false" aria-label="Deeplink URI"><datalist id="deeplink-suggestions">'+suggestions.map((uri)=>'<option value="'+esc(uri)+'"></option>').join('')+'</datalist><button class="star-button" id="favorite-deeplink" title="Toggle favorite" aria-label="Toggle favorite">'+(draftFavorite?'★':'☆')+'</button><button class="command-launch" id="open-deeplink" title="Launch deeplink" aria-label="Launch deeplink"'+(deepLinkDraft.trim()&&adbReady&&!launching?'':' disabled')+(launching?' aria-busy="true"':'')+'>'+(launching?'<span class="spinner"></span>':'↗')+'</button></div>';
+ const target=group(row('Device',selectWrap('deeplink-device',deviceOptions,{label:'Target device'})));
  const result=state.linkResult?'<div class="link-result '+(state.linkResult.ok?'ok':'error')+'">'+esc(state.linkResult.message)+'</div>':'';
- const body='<div class="deeplink-console"><div class="console-bar"><span><i></i><i></i><i></i></span><span>Intent launcher</span><span class="console-signal '+(adbReady?'on':'')+'"></span></div><div class="uri-command"><span class="command-prompt" aria-hidden="true">↗</span><input id="deeplink-uri" list="deeplink-suggestions" value="'+esc(deepLinkDraft)+'" placeholder="myapp://path" aria-label="Deeplink URI"><datalist id="deeplink-suggestions">'+suggestions.map((uri)=>'<option value="'+esc(uri)+'"></option>').join('')+'</datalist><button class="star-button" id="favorite-deeplink" title="Toggle favorite" aria-label="Toggle favorite">'+(draftFavorite?'★':'☆')+'</button></div><div class="deeplink-target"><select id="deeplink-device" aria-label="Target device">'+deviceOptions+'</select><button class="primary" id="open-deeplink"'+(deepLinkDraft.trim()&&adbReady?'':' disabled')+'>Launch</button></div></div><div class="discovered-links"><div class="micro-heading"><span>Discovered routes</span><span>'+prefixes.length+'</span></div>'+prefixChips+'</div>'+result+(favoriteRows?'<div class="link-group link-vault"><label class="caption">Favorites</label>'+favoriteRows+'</div>':'')+(recentRows?'<div class="link-group link-vault"><div class="link-heading"><label class="caption">Recent</label><button class="text-button" id="clear-deeplinks">Clear</button></div>'+recentRows+'</div>':'');
- return section('deeplinks','Deeplinks',prefixes.length+' discovered',body);
+ const routes='<div class="micro-heading"><span>Discovered routes</span><span>'+prefixes.length+'</span></div>'+prefixChips;
+ const favoritesBlock=favoriteRows?'<div class="link-group"><div class="micro-heading"><span>Favorites</span><span>'+favorites.length+'</span></div>'+favoriteRows+'</div>':'';
+ const recentBlock=recentRows?'<div class="link-group"><div class="micro-heading"><span>Recent</span><button class="text-button" id="clear-deeplinks">Clear</button></div>'+recentRows+'</div>':'';
+ return section('deeplinks','Deeplinks',prefixes.length+' discovered',command+target+result+routes+favoritesBlock+recentBlock);
 }
 
 function linkRows(items,favorite){return items.map((uri)=>'<div class="link-row"><button class="link-value" data-link="'+esc(uri)+'">'+esc(uri)+'</button><button class="link-star '+(favorite?'active':'')+'" data-favorite="'+esc(uri)+'" title="'+(favorite?'Remove favorite':'Add favorite')+'">'+(favorite?'★':'☆')+'</button></div>').join('')}
 
-function locationSection(deviceOptions,adbReady){const trail=trails[locationState.trail],coordinatesMissing=!locationState.latitude.trim()||!locationState.longitude.trim();const status='<span class="location-live"><span class="status-dot '+(locationState.status==='playing'?'on':'')+'"></span><span id="location-summary">'+locationSummary()+'</span></span>';const manual='<div class="field"><label class="caption" for="location-device">Target emulator</label><select id="location-device">'+deviceOptions+'</select></div><div class="coords"><div class="field"><label class="caption" for="location-latitude">Latitude</label><input id="location-latitude" inputmode="decimal" value="'+esc(locationState.latitude)+'" placeholder="37.7749"></div><div class="field"><label class="caption" for="location-longitude">Longitude</label><input id="location-longitude" inputmode="decimal" value="'+esc(locationState.longitude)+'" placeholder="-122.4194"></div></div>'+actionButton('location','Apply location','secondary block',coordinatesMissing||!adbReady);const route='<div class="section-divider"><span>Simulated route</span></div><div class="route-select"><select id="trail-select" aria-label="Simulated route">'+trails.map((t,i)=>'<option value="'+i+'"'+(i===locationState.trail?' selected':'')+'>'+esc(t.name)+'</option>').join('')+'</select><div class="route-description" id="route-description">'+esc(trail.description)+'</div></div><div class="route-scene"><canvas id="route-canvas"></canvas><span class="scene-chip elevation low">'+Math.round(prepared.minAlt)+' m</span><span class="scene-chip elevation high">'+Math.round(prepared.maxAlt)+' m</span><div class="route-stats"><div class="stat"><div class="stat-label">Distance</div><div class="stat-value" id="distance-stat">0 m</div></div><div class="stat"><div class="stat-label">Pace</div><div class="stat-value" id="pace-stat">'+formatPace(speed())+'</div></div><div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value" id="elapsed-stat">0:00</div></div></div></div><div class="playback"><button class="primary" id="play-location"'+(adbReady?'':' disabled')+'>'+(locationState.status==='playing'?'Pause':'Play')+'</button><button class="secondary" id="stop-location"'+(adbReady?'':' disabled')+'>Stop</button></div><div class="mode-row"><div class="segmented" role="group" aria-label="Movement mode">'+['walk','run','cycle','drive'].map((m)=>'<button class="segment '+(m===locationState.mode?'active':'')+'" data-mode="'+m+'" title="'+m+'">'+({walk:'●',run:'↗',cycle:'∞',drive:'◆'}[m])+'</button>').join('')+'</div><button class="secondary speed" id="speed-location">'+locationState.multiplier+'×</button></div><div class="location-error" id="location-error">'+esc(locationState.error)+'</div>';return section('location','Location',status,manual+route);}
+function locationSection(deviceOptions,adbReady){
+ const trail=trails[locationState.trail];
+ const status='<span class="location-live"><span class="status-dot '+(locationState.status==='playing'?'on':'')+'"></span><span id="location-summary">'+locationSummary()+'</span></span>';
+ const controls=group(
+  row('Emulator',selectWrap('location-device',deviceOptions,{label:'Target emulator'}))
+  +row('Coordinates','<input id="location-coords" class="row-input" inputmode="decimal" spellcheck="false" value="'+esc(locationState.coords)+'" placeholder="37.7749, -122.4194" aria-label="Latitude, longitude">'+actionButton('location','Set','secondary compact',!parseCoords(locationState.coords)||!adbReady))
+  +row('Route',selectWrap('trail-select',trails.map((t,i)=>'<option value="'+i+'"'+(i===locationState.trail?' selected':'')+' title="'+esc(t.description)+'">'+esc(t.name)+'</option>').join(''),{label:'Simulated route',title:trail.description}))
+ );
+ const scene='<div class="route-scene"><canvas id="route-canvas"></canvas><span class="scene-chip elevation low">'+Math.round(prepared.minAlt)+' m</span><span class="scene-chip elevation high">'+Math.round(prepared.maxAlt)+' m</span></div>';
+ const readout='<div class="route-readout"><div class="stat"><div class="stat-label">Distance</div><div class="stat-value" id="distance-stat">0 m</div></div><div class="stat"><div class="stat-label">Pace</div><div class="stat-value" id="pace-stat">'+formatPace(speed())+'</div></div><div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value" id="elapsed-stat">0:00</div></div></div>';
+ const playback='<div class="action-strip"><button class="primary" id="play-location"'+(adbReady?'':' disabled')+'>'+(locationState.status==='playing'?'Pause':'Play')+'</button><button class="secondary" id="stop-location"'+(adbReady?'':' disabled')+'>Stop</button></div>';
+ const modes='<div class="mode-row"><div class="segmented" role="group" aria-label="Movement mode">'+['walk','run','cycle','drive'].map((m)=>'<button class="segment '+(m===locationState.mode?'active':'')+'" data-mode="'+m+'" title="'+m+'">'+({walk:'●',run:'↗',cycle:'∞',drive:'◆'}[m])+'</button>').join('')+'</div><button class="secondary speed" id="speed-location">'+locationState.multiplier+'×</button></div>';
+ return section('location','Location',status,controls+scene+readout+playback+modes+'<div class="location-error" id="location-error">'+esc(locationState.error)+'</div>');
+}
 
 function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){locationState.latitude=document.getElementById('location-latitude')?.value||'';locationState.longitude=document.getElementById('location-longitude')?.value||'';send('location',{serial:locationState.serial,latitude:locationState.latitude,longitude:locationState.longitude})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});
+ document.getElementById('deeplink-uri')?.addEventListener('keydown',(e)=>{if(e.key!=='Enter')return;const button=document.getElementById('open-deeplink');if(button&&!button.disabled)button.click()});
  document.getElementById('open-deeplink')?.addEventListener('click',()=>{const input=document.getElementById('deeplink-uri');deepLinkDraft=input.value;send('deeplink-open',{uri:deepLinkDraft,serial:document.getElementById('deeplink-device')?.value||''})});
  document.getElementById('favorite-deeplink')?.addEventListener('click',()=>send('deeplink-favorite',{uri:document.getElementById('deeplink-uri')?.value||''}));
  document.getElementById('clear-deeplinks')?.addEventListener('click',()=>send('deeplink-clear'));
@@ -159,8 +194,8 @@ function bind(){
  app.querySelectorAll('[data-db-table]').forEach((el)=>el.addEventListener('click',()=>send('db-table',{table:el.dataset.dbTable})));
  app.querySelectorAll('[data-db-cell]').forEach((el)=>el.addEventListener('click',()=>editDbCell(el)));
  document.getElementById('location-device')?.addEventListener('change',(e)=>{locationState.serial=e.target.value});
- document.getElementById('location-latitude')?.addEventListener('input',(e)=>{locationState.latitude=e.target.value;updateLocationButton()});
- document.getElementById('location-longitude')?.addEventListener('input',(e)=>{locationState.longitude=e.target.value;updateLocationButton()});
+ document.getElementById('location-coords')?.addEventListener('input',(e)=>{locationState.coords=e.target.value;updateLocationButton()});
+ document.getElementById('location-coords')?.addEventListener('keydown',(e)=>{if(e.key!=='Enter')return;const button=document.querySelector('[data-action="location"]');if(button&&!button.disabled)button.click()});
  document.getElementById('trail-select')?.addEventListener('change',(e)=>{locationState.trail=Number(e.target.value);locationState.mode=trails[locationState.trail].mode;resetLocation();prepared=prepare(trails[locationState.trail]);render()});
  document.getElementById('play-location')?.addEventListener('click',()=>{locationState.status=locationState.status==='playing'?'paused':'playing';locationState.last=performance.now();updateLocationText()});
  document.getElementById('stop-location')?.addEventListener('click',()=>{resetLocation();updateLocationText()});
@@ -201,7 +236,7 @@ function drawRoute(now){
 }
 function locationSummary(){return locationState.status==='playing'?'Simulating · '+formatDuration(locationState.elapsed):locationState.status==='paused'?'Paused · '+formatDuration(locationState.elapsed):'Idle'}
 function updateDeepLinkButton(){const button=document.getElementById('open-deeplink');if(button)button.disabled=!deepLinkDraft.trim()||state.adbStatus!=='ready'}
-function updateLocationButton(){const button=document.querySelector('[data-action="location"]');if(button)button.disabled=!locationState.latitude.trim()||!locationState.longitude.trim()||state.adbStatus!=='ready'}
+function updateLocationButton(){const button=document.querySelector('[data-action="location"]');if(button)button.disabled=!parseCoords(locationState.coords)||state.adbStatus!=='ready'}
 function updateLocationText(){const distance=document.getElementById('distance-stat'),pace=document.getElementById('pace-stat'),elapsed=document.getElementById('elapsed-stat'),play=document.getElementById('play-location'),summary=document.getElementById('location-summary'),error=document.getElementById('location-error');if(distance)distance.textContent=formatDistance(locationState.arc);if(pace)pace.textContent=formatPace(speed());if(elapsed)elapsed.textContent=formatDuration(locationState.elapsed);if(play)play.textContent=locationState.status==='playing'?'Pause':'Play';if(summary)summary.textContent=locationSummary();if(error)error.textContent=locationState.error}
 function formatDistance(m){return m<1000?m.toFixed(0)+' m':(m/1000).toFixed(2)+' km'}function formatDuration(ms){const s=Math.floor(ms/1000),m=Math.floor(s/60);return m+':'+String(s%60).padStart(2,'0')}function formatPace(v){if(v>7)return(v*3.6).toFixed(0)+' km/h';const s=1000/v,m=Math.floor(s/60);return m+':'+String(Math.round(s%60)).padStart(2,'0')+'/km'}
 requestAnimationFrame(tick);
