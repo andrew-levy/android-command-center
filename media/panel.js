@@ -25,6 +25,7 @@ const iconShapes={
  external:'<path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
  camera:'<path d="M14.5 4 16 7h4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4l1.5-3z"/><circle cx="12" cy="13" r="4"/>',
  sparkles:'<path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7zM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7z"/>',
+ save:'<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
  braces:'<path d="M8 3H6a2 2 0 0 0-2 2v4l-2 3 2 3v4a2 2 0 0 0 2 2h2M16 3h2a2 2 0 0 1 2 2v4l2 3-2 3v4a2 2 0 0 1-2 2h-2"/>',
  phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -33,7 +34,7 @@ const iconShapes={
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
 const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',database:'database',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
 let state={devices:[],emulators:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
 const savedUi=vscode.getState?.()||{};
 const uiVersion=2;
@@ -54,6 +55,8 @@ let mapDirty=true;
 const send=(type,extra={})=>vscode.postMessage({type,...extra});
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const saveUi=()=>vscode.setState?.({uiVersion,deepLinkDraft,sqlDraft,locationView:locationState.view,openSections:[...openSections]});
+const captureScrollState=()=>({page:{left:document.scrollingElement?.scrollLeft||0,top:document.scrollingElement?.scrollTop||0},regions:new Map([...app.querySelectorAll('[data-preserve-scroll]')].map((el)=>[el.dataset.preserveScroll,{left:el.scrollLeft,top:el.scrollTop}]))});
+const restoreScrollState=(snapshot)=>{for(const el of app.querySelectorAll('[data-preserve-scroll]')){const position=snapshot.regions.get(el.dataset.preserveScroll);if(position){el.scrollLeft=position.left;el.scrollTop=position.top}}if(document.scrollingElement){document.scrollingElement.scrollLeft=snapshot.page.left;document.scrollingElement.scrollTop=snapshot.page.top}};
 const section=(id,title,status,body)=>'<details class="tool-section" data-section="'+id+'"'+(openSections.has(id)?' open':'')+'><summary><span class="section-title">'+icon(sectionIcons[id])+'<span>'+esc(title)+'</span></span><span class="section-status">'+status+'</span>'+chevron+'</summary><div class="section-body">'+body+'</div></details>';
 const group=(rows)=>'<div class="settings-group">'+rows+'</div>';
 const row=(label,controls,labelClass='',sublabel='')=>'<div class="row"><span class="row-copy"><span class="row-label'+(labelClass?' '+labelClass:'')+'">'+esc(label)+'</span>'+(sublabel?'<span class="row-sublabel">'+esc(sublabel)+'</span>':'')+'</span><span class="row-controls">'+controls+'</span></div>';
@@ -65,6 +68,7 @@ render();
 send('ready');
 
 function render(){
+ const scrollState=captureScrollState();
  const devices=state.devices||[],online=devices.filter((d)=>d.state==='device'),locationDevices=online.filter((d)=>d.serial.startsWith('emulator-')),avds=state.emulators||[];
  if(!locationDevices.some((d)=>d.serial===locationState.serial))locationState.serial=locationDevices[0]?.serial||'';
  if(locationState.status==='playing'&&state.adbStatus!=='checking'&&!canPlayRoute(state.adbStatus==='ready',locationState.serial)){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}
@@ -84,6 +88,7 @@ function render(){
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
  app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
  bind();
+ restoreScrollState(scrollState);
 }
 
 function toolchainSection(){
@@ -105,7 +110,7 @@ function toolchainSection(){
   ?'<button class="secondary" data-setup="dependency-choose-sqlite">Choose sqlite3…</button>':'';
  const actions=cliAction+adbAction+sqliteAction;
  const textActions='<div class="toolchain-actions"><button class="text-button" data-setup="dependency-settings">'+icon('settings')+'Settings</button><button class="text-button" data-setup="dependency-retry"'+(checking?' disabled':'')+'>'+icon('refresh')+'Check again</button></div>';
- return '<details class="toolchain" data-section="toolchain"'+(open?' open':'')+' aria-label="Android toolchain"><summary>'+icon('toolchain','toolchain-icon')+'<span class="status-dot'+dot+'" aria-hidden="true"></span><span class="toolchain-label">'+label+'</span><span class="toolchain-env" title="'+esc(environment)+'">'+esc(environment)+'</span>'+chevron+'</summary><div class="section-body">'+rows+(actions?'<div class="setup-actions">'+actions+'</div>':'')+textActions+'</div></details>';
+ return '<details class="toolchain" data-section="toolchain"'+(open?' open':'')+' aria-label="Android toolchain"><summary>'+icon('toolchain','toolchain-icon')+'<span class="status-dot'+dot+'" aria-hidden="true"></span><span class="toolchain-label">'+label+'</span><span class="toolchain-env" title="'+esc(environment)+'">'+esc(environment)+'</span>'+chevron+'</summary><div class="section-body" data-preserve-scroll="toolchain">'+rows+(actions?'<div class="setup-actions">'+actions+'</div>':'')+textActions+'</div></details>';
 }
 
 function dependencyRow(name,status,version,message){
@@ -140,7 +145,7 @@ function deviceCard({name,device,virtual}){const online=device?.state==='device'
 
 function inspectorAction(id,iconName,title,description,disabled=false){const op=state.operation?.id===id?state.operation:null,running=op?.status==='running';return '<button class="inspector-tile" data-action="'+id+'" title="'+esc(description)+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'><span class="inspector-tile-icon">'+operationVisual(op,icon(iconName))+'</span><span>'+esc(title)+'</span></button>'}
 
-function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">'+icon('inspector')+'</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?'Capture ready':cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
+function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"><div class="inspector-preview-footer"><span>'+esc(state.screenshotSaved?'Saved copy':'Not saved')+'</span>'+actionButton('screenshot-save','Save as…','secondary compact')+'</div></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">'+icon('inspector')+'</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?(state.screenshotSaved?'Saved':'Unsaved preview'):cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
 
 function databaseSection(deviceOptions,adbReady,sqliteReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
@@ -183,7 +188,7 @@ function databaseResult(result,table,message){
    return '<td class="'+(cell===null?'db-null':'')+(editable?' db-editable':'')+'"'+(editable?' data-db-cell data-rowid="'+esc(rowid)+'" data-column="'+esc(column)+'" data-table="'+esc(table)+'" title="Click to edit"':'')+'>'+esc(display)+'</td>';
   }).join('')+'</tr>';
  }).join('');
- return '<div class="db-result"><div class="db-result-meta">'+esc(resultMessage)+'</div><div class="db-table-wrap"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+ return '<div class="db-result"><div class="db-result-meta">'+esc(resultMessage)+'</div><div class="db-table-wrap" data-preserve-scroll="database-result"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
 }
 
 function appDataSection(deviceOptions,adbReady){
@@ -208,7 +213,7 @@ function appDataSection(deviceOptions,adbReady){
 function deepLinkSection(deviceOptions,adbReady){
  const prefixes=state.deepLinkPrefixes||[],favorites=state.favoriteDeepLinks||[],recent=state.recentDeepLinks||[];
  const suggestions=[...new Set([...prefixes,...favorites,...recent])];
- const prefixChips=prefixes.length?'<div class="chip-row">'+prefixes.map((uri)=>'<button class="chip" data-link="'+esc(uri)+'">'+esc(uri)+'</button>').join('')+'</div>':'<p class="muted">Build once to discover schemes from the selected variant.</p>';
+ const prefixChips=prefixes.length?'<div class="chip-row" data-preserve-scroll="deeplink-prefixes">'+prefixes.map((uri)=>'<button class="chip" data-link="'+esc(uri)+'">'+esc(uri)+'</button>').join('')+'</div>':'<p class="muted">Build once to discover schemes from the selected variant.</p>';
  const favoriteRows=linkRows(favorites,true),draftFavorite=favorites.includes(deepLinkDraft);
  const recentRows=linkRows(recent.filter((uri)=>!favorites.includes(uri)),false);
  const deepLinkOp=state.operation?.id==='deeplink'?state.operation:null,launching=deepLinkOp?.status==='running';
@@ -248,8 +253,8 @@ function locationSection(deviceOptions,adbReady){
 function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
- app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('app-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
  document.getElementById('app-device')?.addEventListener('change',(e)=>send('app-packages',{serial:e.target.value}));

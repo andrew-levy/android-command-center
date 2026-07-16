@@ -4,7 +4,6 @@ src/**
 tsconfig.json
 node_modules/**
 *.vsix
-.android-cli/**
 dev/**
 test/**
 test-artifacts/**

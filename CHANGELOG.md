@@ -2,6 +2,25 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.8 - 2026-07-16
+
+### Added
+
+- Added a preview-first screenshot workflow with clear saved/unsaved state and an explicit **Save as…** destination picker.
+- Remembered the last screenshot destination while retaining only the latest disposable preview.
+
+### Changed
+
+- Moved database working copies and screenshot previews into private, workspace-scoped extension storage so runtime files are never added to the project.
+- Made automatic database scans metadata-only; the selected database is copied only after the Database section is opened or explicitly refreshed.
+- Separated database working copies by device and package and cleaned disposable files between targets and extension sessions.
+- Kept captured screenshots in the Inspector preview instead of automatically opening them in an editor tab.
+
+### Fixed
+
+- Preserved page, deeplink, database-result, and Toolchain scroll positions across asynchronous panel rerenders.
+- Hid the deeplink chip scrollbar without removing horizontal scrolling.
+
 ## 0.1.6 - 2026-07-16
 
 ### Changed

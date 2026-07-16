@@ -39,7 +39,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
 - See available and connected devices together, start or stop emulators independently, and switch device light/dark mode
-- Capture normal or annotated screenshots and preview them in the editor
+- Capture normal or annotated screenshots, preview them in the panel, and choose where to save them
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
 - Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device
@@ -51,7 +51,7 @@ The extension deliberately does not wrap `android studio ...` commands: those re
 
 Android Command Center does not require an account or send project data to a hosted service. It invokes the Android CLI, ADB, Gradle wrapper, and SQLite tools in the extension-host environment. Interactive and long-running commands open in the integrated terminal so you can inspect or cancel them.
 
-Destructive app-data actions identify the selected device and package and require confirmation where appropriate. Database editing is intended for debuggable apps and works through local workspace copies under `.android-cli/databases/`.
+Destructive app-data actions identify the selected device and package and require confirmation where appropriate. Database editing is intended for debuggable apps and uses disposable working copies in VS Code/Cursor's private extension storage. Android Command Center does not create runtime folders in your project.
 
 ## Develop
 
@@ -85,4 +85,4 @@ Inspect SQLite / Room databases for **debuggable** apps without Android Studio:
 3. Pick a process and database, browse tables, run SQL, or click a cell to edit.
 4. Mutating statements and cell edits are applied locally then **pushed** back to the device. Use **Push** if you need to retry a write.
 
-Working copies live under `.android-cli/databases/` in the workspace. If the app already has the DB open, force-stop or relaunch it after a push so it reloads from disk.
+Working copies live in private, workspace-scoped extension storage and are cleaned automatically. Opening the dashboard only discovers database metadata; a database is copied after you interact with the **Database** section. If the app already has the DB open, force-stop or relaunch it after a push so it reloads from disk.

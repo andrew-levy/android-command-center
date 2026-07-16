@@ -835,6 +835,11 @@ details.toolchain summary {
   gap: 5px;
   overflow-x: auto;
   padding-bottom: 2px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.chip-row::-webkit-scrollbar {
+  display: none;
 }
 .chip {
   flex: 0 0 auto;
@@ -982,6 +987,19 @@ details.toolchain summary {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--deep);
+}
+.inspector-preview-footer {
+  min-height: 38px;
+  padding: 6px 8px 6px 11px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inspector-preview-footer > span {
+  color: var(--muted);
+  font-size: 10px;
 }
 .preview {
   display: block;

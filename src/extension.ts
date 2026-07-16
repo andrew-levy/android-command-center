@@ -21,6 +21,7 @@ const VARIANT_KEY = 'androidCli.selectedVariant.v1';
 const RECENT_LINKS_KEY = 'androidCli.recentDeepLinks.v1';
 const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
 const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
+const SCREENSHOT_SAVE_DIR_KEY = 'androidCli.screenshotSaveDirectory.v1';
 const REFRESH_CHECK_TIMEOUT_MS = 12_000;
 const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
@@ -62,6 +63,7 @@ type DashboardState = {
   busy?: string;
   error?: string;
   screenshot?: string;
+  screenshotSaved?: boolean;
   linkResult?: LinkResult;
   operation?: Operation;
   testOpenSections?: string[];
@@ -70,6 +72,7 @@ type DashboardState = {
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new DashboardProvider(context);
   context.subscriptions.push(
+    provider,
     vscode.window.registerWebviewViewProvider('androidCli.dashboard', provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
@@ -81,7 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {}
 
-class DashboardProvider implements vscode.WebviewViewProvider {
+class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
   private state: DashboardState;
   private devicePoll?: NodeJS.Timeout;
@@ -89,10 +92,11 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   private autoScannedSerial?: string;
   private operationSequence = 0;
   private readonly databases: DatabaseInspector;
+  private screenshotFile?: vscode.Uri;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
-    this.databases = new DatabaseInspector(adb, sqlite, () => firstRoot()?.fsPath);
+    this.databases = new DatabaseInspector(adb, sqlite, () => this.privateStorageUri().fsPath);
     this.state = {
       cliAvailable: cached?.cliAvailable ?? false,
       cliStatus: 'checking',
@@ -122,7 +126,7 @@ class DashboardProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableScripts: true, localResourceRoots: [this.context.extensionUri, ...workspaceRoots()] };
+    view.webview.options = { enableScripts: true, localResourceRoots: [this.context.extensionUri, this.privateStorageUri()] };
     view.webview.onDidReceiveMessage((message) => void this.handle(message));
     view.webview.html = html(view.webview);
     if (this.devicePoll) clearInterval(this.devicePoll);
@@ -131,6 +135,13 @@ class DashboardProvider implements vscode.WebviewViewProvider {
       if (this.devicePoll) clearInterval(this.devicePoll);
       this.devicePoll = undefined;
     });
+  }
+
+  dispose(): void {
+    if (this.devicePoll) clearInterval(this.devicePoll);
+    this.devicePoll = undefined;
+    void this.databases.dispose();
+    if (this.screenshotFile) void vscode.workspace.fs.delete(this.screenshotFile, { useTrash: false }).then(undefined, () => undefined);
   }
 
   private async pollDevices(): Promise<void> {
@@ -257,11 +268,13 @@ class DashboardProvider implements vscode.WebviewViewProvider {
         case 'stop': await this.stopDevice(String(message.serial)); return;
         case 'theme': await this.setDeviceTheme(String(message.serial), String(message.theme)); return;
         case 'screenshot': await this.screenshot(Boolean(message.annotate)); return;
+        case 'screenshot-save': await this.saveScreenshot(); return;
         case 'layout': await this.layout(); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'logcat': return void this.terminal('Logcat', [adb(), ...(message.serial ? ['-s', String(message.serial)] : []), 'logcat']);
         case 'db-refresh': await this.dbRefresh(String(message.serial ?? '')); return;
+        case 'db-open': await this.dbOpen(); return;
         case 'db-package': await this.dbSelectPackage(String(message.packageName ?? '')); return;
         case 'db-database': await this.dbSelectDatabase(String(message.database ?? '')); return;
         case 'db-table': await this.dbSelectTable(String(message.table ?? '')); return;
@@ -420,14 +433,59 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private async screenshot(annotate: boolean): Promise<void> {
-    const root = requireRoot();
-    const folder = vscode.Uri.joinPath(root, '.android-cli', 'screenshots');
+    const folder = vscode.Uri.joinPath(this.privateStorageUri(), 'screenshot-previews');
     await vscode.workspace.fs.createDirectory(folder);
-    const file = vscode.Uri.joinPath(folder, `screen-${Date.now()}${annotate ? '-annotated' : ''}.png`);
-    await this.busy('Capturing screenshot…', () => run(cli(), ['screen', 'capture', `--output=${file.fsPath}`, ...(annotate ? ['--annotate'] : [])]), annotate ? 'screenshot-annotated' : 'screenshot', 'Screenshot captured');
+    const file = vscode.Uri.joinPath(folder, screenshotFilename(annotate));
+    try {
+      await this.busy('Capturing screenshot…', () => run(cli(), ['screen', 'capture', `--output=${file.fsPath}`, ...(annotate ? ['--annotate'] : [])]), annotate ? 'screenshot-annotated' : 'screenshot', 'Screenshot captured');
+    } catch (error) {
+      await vscode.workspace.fs.delete(file, { useTrash: false }).then(undefined, () => undefined);
+      throw error;
+    }
+    await this.pruneScreenshotPreviews(folder, file);
+    this.screenshotFile = file;
     this.state.screenshot = this.view?.webview.asWebviewUri(file).toString();
+    this.state.screenshotSaved = false;
     this.render();
-    await vscode.commands.executeCommand('vscode.open', file);
+  }
+
+  private async saveScreenshot(): Promise<void> {
+    const source = this.screenshotFile;
+    if (!source) return;
+    const defaultUri = this.defaultScreenshotSaveUri(path.basename(source.fsPath));
+    const target = await vscode.window.showSaveDialog({
+      title: 'Save device screenshot',
+      saveLabel: 'Save Screenshot',
+      defaultUri,
+      filters: { 'PNG image': ['png'] },
+    });
+    if (!target) return;
+    await this.busy(
+      'Saving screenshot…',
+      async () => vscode.workspace.fs.copy(source, target, { overwrite: true }),
+      'screenshot-save',
+      'Screenshot saved',
+    );
+    await this.context.globalState.update(SCREENSHOT_SAVE_DIR_KEY, uriDirectory(target).toString());
+    this.state.screenshotSaved = true;
+    this.render();
+  }
+
+  private defaultScreenshotSaveUri(filename: string): vscode.Uri {
+    const saved = this.context.globalState.get<string>(SCREENSHOT_SAVE_DIR_KEY);
+    if (saved) {
+      try { return vscode.Uri.joinPath(vscode.Uri.parse(saved), filename); }
+      catch { /* Fall back to the user's home directory. */ }
+    }
+    return vscode.Uri.file(path.join(os.homedir(), filename));
+  }
+
+  private async pruneScreenshotPreviews(folder: vscode.Uri, keep: vscode.Uri): Promise<void> {
+    const entries = await vscode.workspace.fs.readDirectory(folder).then((items) => items, () => []);
+    await Promise.all(entries
+      .map(([name]) => vscode.Uri.joinPath(folder, name))
+      .filter((entry) => entry.toString() !== keep.toString())
+      .map((entry) => vscode.workspace.fs.delete(entry, { recursive: true, useTrash: false }).then(undefined, () => undefined)));
   }
 
   private async layout(): Promise<void> {
@@ -469,13 +527,24 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     this.state.databaseScanning = true;
     this.render();
     try {
-      this.state.database = await this.databases.refreshProcesses(serial, this.state.applicationId, false);
+      this.state.database = await this.databases.refreshProcesses(serial, this.state.applicationId, false, false);
     } catch (error) {
       this.state.database = { ...this.databases.snapshot(), error: messageOf(error) };
     } finally {
       this.state.databaseScanning = false;
       this.render();
     }
+  }
+
+  private async dbOpen(): Promise<void> {
+    const database = this.databases.snapshot();
+    if (!database.selectedDatabase || database.localPath || this.state.databaseScanning || this.state.operation?.id === 'db-open') return;
+    this.state.database = await this.busy(
+      `Opening ${database.selectedDatabase}…`,
+      () => this.databases.selectDatabase(database.selectedDatabase!),
+      'db-open',
+      'Database ready',
+    );
   }
 
   private async dbSelectPackage(packageName: string): Promise<void> {
@@ -754,11 +823,16 @@ class DashboardProvider implements vscode.WebviewViewProvider {
     }, SUCCESS_ENTER_MS + SUCCESS_HOLD_MS);
   }
 
+  private privateStorageUri(): vscode.Uri {
+    return this.context.storageUri ?? vscode.Uri.joinPath(this.context.globalStorageUri, 'workspace-less');
+  }
+
   private persistCache(): void {
     const {
       busy: _busy,
       error: _error,
       screenshot: _screenshot,
+      screenshotSaved: _screenshotSaved,
       linkResult: _result,
       operation: _operation,
       database: _database,
@@ -773,6 +847,16 @@ class DashboardProvider implements vscode.WebviewViewProvider {
   }
 
   private render(): void { void this.view?.webview.postMessage({ type: 'state', state: this.state }); }
+}
+
+function screenshotFilename(annotate: boolean): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `screen-${timestamp}${annotate ? '-annotated' : ''}.png`;
+}
+
+function uriDirectory(uri: vscode.Uri): vscode.Uri {
+  const separator = uri.path.lastIndexOf('/');
+  return uri.with({ path: separator > 0 ? uri.path.slice(0, separator) : '/' });
 }
 
 function config(): vscode.WorkspaceConfiguration { return vscode.workspace.getConfiguration('androidCli'); }
@@ -813,7 +897,6 @@ function installCliCommand(): string {
   return `curl -fsSL https://dl.google.com/android/cli/latest/${platform}_${architecture}/install.sh | bash`;
 }
 function firstExisting(candidates: string[]): string | undefined { return candidates.find((candidate) => fs.existsSync(candidate)); }
-function workspaceRoots(): vscode.Uri[] { return vscode.workspace.workspaceFolders?.map((folder) => folder.uri) ?? []; }
 function firstRoot(): vscode.Uri | undefined { return vscode.workspace.workspaceFolders?.[0]?.uri; }
 function requireRoot(): vscode.Uri {
   const root = firstRoot();

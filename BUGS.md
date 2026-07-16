@@ -81,7 +81,7 @@ Priority guide:
 - Expected: Clicking **Scan** discovers the test app database and lists its tables.
 - Actual: Scan fails before the tables can be listed because the local database file cannot be opened.
 - Reproduction steps: build `app-full-debug.apk`, install/run it, open the Database section, and click **Scan**.
-- Evidence: `sqlite3 -json -readonly /Users/andrewlevy/Documents/AndroidCliTestApp/.android-cli/databases/com.example.androidclitest/command-center-test.db SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 200;` fails with `Error: in prepare, unable to open database file (14)`.
+- Evidence: a read-only `sqlite3` table-list query against the cached test database failed with `Error: in prepare, unable to open database file (14)`.
 - Root cause: The pulled database remained in WAL mode, but the inspector deleted its local `-wal` and `-shm` sidecars before opening it read-only. SQLite then could not open the WAL-mode copy and returned error 14.
 - Fix: The inspector no longer copies device shared-memory locks. It rebuilds local shared memory, checkpoints/truncates the pulled WAL into the main database, keeps the local sidecars needed for read-only inspection, and removes them only after checkpointing immediately before a push.
 - Fix verification: `npm test` creates the same WAL-mode/no-sidecar failure shape, prepares it through the production helper, and confirms a read-only table query succeeds. A copy of the recorded failing fixture also returned `android_metadata`, `fixture_metadata`, and `test_records` after preparation. The real emulator Scan journey still needs a screenshot-backed rerun before this item is promoted to Verified.

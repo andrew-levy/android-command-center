@@ -41,18 +41,29 @@ export function emptyDatabaseState(): DatabaseInspectorState {
 export class DatabaseInspector {
   private state: DatabaseInspectorState = emptyDatabaseState();
   private workRoot?: string;
+  private preparedStorageRoot?: string;
 
   constructor(
     private readonly adb: () => string,
     private readonly sqlite: () => string,
-    private readonly workspaceRoot: () => string | undefined,
+    private readonly storageRoot: () => string | undefined,
   ) {}
 
   snapshot(): DatabaseInspectorState {
     return { ...this.state };
   }
 
-  async refreshProcesses(serial: string, preferredPackage?: string, thorough = true): Promise<DatabaseInspectorState> {
+  async dispose(): Promise<void> {
+    await this.discardLocal();
+  }
+
+  async refreshProcesses(
+    serial: string,
+    preferredPackage?: string,
+    thorough = true,
+    loadSelectedDatabase = true,
+  ): Promise<DatabaseInspectorState> {
+    if (this.state.serial && this.state.serial !== serial) await this.discardLocal();
     this.state.serial = serial;
     this.state.error = undefined;
     const processes = await listDebuggableProcesses(this.adb(), serial, preferredPackage, thorough);
@@ -62,7 +73,7 @@ export class DatabaseInspector {
         ? preferredPackage
         : processes.find((item) => item.running)?.packageName ?? processes[0]?.packageName;
     }
-    if (this.state.packageName) await this.refreshDatabases();
+    if (this.state.packageName) await this.refreshDatabases(loadSelectedDatabase);
     else {
       this.state.databases = [];
       this.state.selectedDatabase = undefined;
@@ -169,7 +180,7 @@ export class DatabaseInspector {
     return this.snapshot();
   }
 
-  private async refreshDatabases(): Promise<void> {
+  private async refreshDatabases(loadSelectedDatabase = true): Promise<void> {
     const serial = this.requireSerial();
     const packageName = this.requirePackage();
     const databases = await listDatabases(this.adb(), serial, packageName);
@@ -182,7 +193,7 @@ export class DatabaseInspector {
       this.state.localPath = undefined;
       this.state.dirty = false;
     }
-    if (this.state.selectedDatabase) {
+    if (this.state.selectedDatabase && loadSelectedDatabase) {
       await this.pullSelected();
       await this.loadTables();
       if (!this.state.selectedTable && this.state.tables[0]) {
@@ -247,10 +258,15 @@ export class DatabaseInspector {
   }
 
   private async localFileFor(packageName: string, database: string): Promise<string> {
-    const root = this.workspaceRoot();
-    this.workRoot = root
-      ? path.join(root, '.android-cli', 'databases', packageName)
-      : path.join(os.tmpdir(), 'android-cli-databases', packageName);
+    const root = this.storageRoot() ?? path.join(os.tmpdir(), 'android-command-center');
+    const databasesRoot = path.join(root, 'databases');
+    if (this.preparedStorageRoot !== databasesRoot) {
+      // Database copies are disposable. Clear leftovers from a previous host
+      // session before creating the first working copy for this one.
+      await fsp.rm(databasesRoot, { recursive: true, force: true }).catch(() => undefined);
+      this.preparedStorageRoot = databasesRoot;
+    }
+    this.workRoot = path.join(databasesRoot, safePathSegment(this.requireSerial()), safePathSegment(packageName));
     await fsp.mkdir(this.workRoot, { recursive: true });
     return path.join(this.workRoot, database);
   }
@@ -527,6 +543,10 @@ function shellSingleQuote(value: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
 function hasSqliteHeader(buffer: Buffer): boolean {
