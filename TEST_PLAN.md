@@ -98,6 +98,7 @@ Happy paths:
 Edge paths:
 
 - no workspace folder; non-Android folder; missing/non-executable Gradle wrapper;
+- parent monorepo folder with `androidCli.projectRoot` pointing at a nested Android app; changing the setting refreshes variants/deeplinks;
 - Gradle compile failure and Gradle process cancellation;
 - Android CLI missing while Gradle is healthy;
 - no online device, multiple devices, and device-picker cancellation;

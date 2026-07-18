@@ -15,8 +15,8 @@
   return savedUi?.uiVersion===currentVersion?migrated:(migrated?.filter((id)=>id!=='device'&&id!=='toolchain')||['build']);
  }
 
- function buildAvailability(cliReady){
-  return {run:cliReady,clean:true,sync:true};
+ function buildAvailability(cliReady,projectReady=true){
+  return {run:Boolean(cliReady&&projectReady),clean:Boolean(projectReady),sync:Boolean(projectReady)};
  }
 
  function canPlayRoute(adbReady,serial){

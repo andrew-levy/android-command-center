@@ -67,7 +67,7 @@ test('Database renders one result message instead of repeating the row count', (
 });
 
 test('Clean and Sync use Gradle-only availability while Run still requires Android CLI', () => {
-  assert.match(panel, /const availability=buildAvailability\(cliReady\)/);
+  assert.match(panel, /const availability=buildAvailability\(cliReady,projectReady\)/);
   assert.match(panel, /actionButton\('clean','Clean','secondary compact',!availability\.clean\)/);
   assert.match(panel, /actionButton\('clean'.*actionButton\('gradle-sync'/s);
   assert.doesNotMatch(panel, /actionButton\('build','Build'/);
@@ -75,6 +75,18 @@ test('Clean and Sync use Gradle-only availability while Run still requires Andro
   assert.match(panel, /actionButton\('gradle-sync','Sync','secondary compact',!availability\.sync\)/);
   assert.match(extension, /case 'gradle-sync': await this\.gradleSync\(\); return;/);
   assert.match(extension, /\['help', '--refresh-dependencies', '--console=plain'\]/);
+});
+
+test('Project root is configurable and refreshes when the setting changes', () => {
+  assert.equal(manifest.contributes.configuration.properties['androidCli.projectRoot'].default, '');
+  assert.match(extension, /resolveProjectRootPath/);
+  assert.match(extension, /onDidChangeConfiguration/);
+  assert.match(extension, /affectsConfiguration\('androidCli\.projectRoot'\)/);
+  assert.match(extension, /onProjectRootSettingChanged/);
+  assert.match(extension, /clearProjectDerivedState/);
+  assert.match(extension, /new vscode\.RelativePattern\(root,/);
+  assert.match(panel, /row\('Project'/);
+  assert.match(panel, /project-root-message/);
 });
 
 test('Route playback requires a selected emulator in the live panel', () => {

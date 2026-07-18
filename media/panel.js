@@ -122,15 +122,20 @@ function dependencyRow(name,status,version,message){
 
 function buildSection(variants,selected,cliReady){
  const active=variants.find((variant)=>variant.id===selected),label=active?.label||'Default target';
- const availability=buildAvailability(cliReady);
+ const projectReady=state.projectRootStatus==='ready';
+ const availability=buildAvailability(cliReady,projectReady);
  const options=variants.map((variant)=>'<option value="'+esc(variant.id)+'"'+(variant.id===selected?' selected':'')+'>'+esc(variant.label)+'</option>').join('');
+ const rootLabel=state.projectRoot||'No folder open';
+ const rootHint=projectReady?'androidCli.projectRoot':'Set androidCli.projectRoot';
+ const notice=!projectReady&&state.projectRootMessage?'<p class="muted project-root-message">'+esc(state.projectRootMessage)+'</p>':'';
  const body=group(
-  row('Variant',selectWrap('build-variant',options,{label:'Build variant',title:label}),'','Gradle target')
+  row('Project','<span class="project-root" title="'+esc(rootLabel)+'">'+esc(rootLabel)+'</span>','',rootHint)
+  +row('Variant',selectWrap('build-variant',options,{label:'Build variant',title:label,disabled:!projectReady}),'','Gradle target')
   +row('Run app',actionButton('build-run','Run','primary compact',!availability.run),'','Build + launch')
   +row('Clean',actionButton('clean','Clean','secondary compact',!availability.clean),'','Remove outputs')
   +row('Gradle Sync',actionButton('gradle-sync','Sync','secondary compact',!availability.sync),'','Refresh dependencies')
- );
- return section('build','Build',esc(label),body);
+ )+notice;
+ return section('build','Build',esc(projectReady?label:'Needs project'),body);
 }
 
 function deviceGrid(devices,avds){

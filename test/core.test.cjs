@@ -1,10 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const path = require('node:path');
 const {
   isCompleteDeepLink,
   isMissingExecutable,
   parseDevices,
+  resolveProjectRootPath,
   summarizeAdb,
   variantFromTask,
 } = require('../dist/core.js');
@@ -49,4 +51,22 @@ test('deep link and missing executable validation cover expected boundaries', ()
 test('summarizeAdb selects the user-facing activity result', () => {
   assert.equal(summarizeAdb('Starting: Intent\nStatus: ok\nActivity: example/.MainActivity'), 'Status: ok');
   assert.equal(summarizeAdb('Starting: Intent'), '');
+});
+
+test('resolveProjectRootPath falls back to the workspace folder and accepts relative or absolute overrides', () => {
+  const workspace = path.resolve('/repo');
+  assert.deepEqual(resolveProjectRootPath('', []), { error: 'no-workspace' });
+  assert.deepEqual(resolveProjectRootPath(undefined, [workspace]), {
+    rootPath: workspace,
+    displayPath: workspace,
+  });
+  assert.deepEqual(resolveProjectRootPath('apps/android', [workspace]), {
+    rootPath: path.resolve(workspace, 'apps/android'),
+    displayPath: 'apps/android',
+  });
+  const absolute = path.resolve('/other/android-app');
+  assert.deepEqual(resolveProjectRootPath(absolute, [workspace]), {
+    rootPath: absolute,
+    displayPath: absolute,
+  });
 });
