@@ -647,6 +647,11 @@ details.toolchain summary {
 }
 
 /* ---------- Devices ---------- */
+.device-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .device-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -663,8 +668,75 @@ details.toolchain summary {
   display: flex;
   flex-direction: column;
 }
+.empty-card {
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+}
+.empty-card strong {
+  font-size: 11px;
+}
+.empty-card span {
+  color: var(--muted);
+  font-size: 10px;
+}
 .device-card.online {
   border-color: var(--line-strong);
+}
+.device-card.selected {
+  border-color: color-mix(in srgb, var(--focus) 55%, var(--line-strong));
+}
+.device-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+.device-controls-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.control-segmented {
+  width: auto;
+  flex: 0 0 auto;
+}
+.control-segmented .segment {
+  min-width: 34px;
+  min-height: 26px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+.permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.chip {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--faint);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 10px;
+}
+.chip:hover {
+  background: var(--hover);
+}
+.chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.muted-inline {
+  color: var(--muted);
+  font-size: 10px;
 }
 .device-card-head {
   display: flex;
@@ -1009,8 +1081,26 @@ details.toolchain summary {
 }
 .inspector-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+.recording-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--deep));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--text);
+  font-size: 10px;
+}
+.inspector-tile[data-action="screen-record-stop"] {
+  color: var(--danger);
+}
+.inspector-tile[data-action="screen-record-start"] .inspector-tile-icon {
+  color: var(--danger);
 }
 .inspector-tile {
   display: flex;

@@ -17,6 +17,15 @@ if(args[0]==='--version'||args[0]==='-V'){
   process.stdout.write('sdk: /fake/android/sdk\nversion: fake-1.0\n');
 }else if(args[0]==='emulator'&&args[1]==='list'){
   if(scenario!=='no-emulators')process.stdout.write('Fake_Pixel_API_31\nFake_Tablet_API_35\n');
+}else if(args[0]==='emulator'&&args[1]==='create'){
+  if(args.includes('--list-profiles')){
+    process.stdout.write('medium_phone\nlarge_phone\nmedium_tablet\nlarge_desktop\n');
+  }else{
+    const profileArg=args.find((arg)=>arg.startsWith('--profile='));
+    const profile=profileArg?profileArg.slice('--profile='.length):(args[args.indexOf('--profile')+1]||'medium_phone');
+    if(scenario==='command-error')fail(24,`Could not create ${profile}.`);
+    process.stdout.write(`Created virtual device ${profile}\n`);
+  }
 }else if(args[0]==='emulator'&&args[1]==='start'){
   if(scenario==='command-error')fail(24,`Could not start ${args[2]||'emulator'}.`);
   process.stdout.write(`${args[2]||'Fake emulator'} started\n`);

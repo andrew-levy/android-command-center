@@ -1,6 +1,17 @@
 const vscode=acquireVsCodeApi();
 const app=document.getElementById('app');
-const {buildAvailability,canPlayRoute,parseCoords,restoreOpenSections}=globalThis.AndroidCliPanelLogic;
+const {
+ buildAvailability,
+ canCreateEmulator,
+ canPlayRoute,
+ canUseDeviceControls,
+ parseCoords,
+ restoreOpenSections,
+ FONT_SCALE_PRESETS,
+ ROTATION_PRESETS,
+ BATTERY_LEVEL_PRESETS,
+ COMMON_PERMISSIONS,
+}=globalThis.AndroidCliPanelLogic;
 const chevron='<svg class="chevron" viewBox="0 0 12 12" fill="none"><path d="m2.5 4.5 3.5 3 3.5-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const iconShapes={
  build:'<path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 9.6 6 7.3 3.7a4 4 0 0 0 5 5l-7.6 7.6a2.1 2.1 0 0 0 3 3z"/>',
@@ -24,9 +35,11 @@ const iconShapes={
  refresh:'<path d="M20 7h-5V2M4 17h5v5M18.5 9a7 7 0 0 0-11.8-3L4 9M5.5 15a7 7 0 0 0 11.8 3L20 15"/>',
  external:'<path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
  camera:'<path d="M14.5 4 16 7h4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4l1.5-3z"/><circle cx="12" cy="13" r="4"/>',
+ record:'<circle cx="12" cy="12" r="6"/>',
  sparkles:'<path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7zM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7z"/>',
  save:'<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
  braces:'<path d="M8 3H6a2 2 0 0 0-2 2v4l-2 3 2 3v4a2 2 0 0 0 2 2h2M16 3h2a2 2 0 0 1 2 2v4l2 3-2 3v4a2 2 0 0 1-2 2h-2"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>',
  phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
  moon:'<path d="M20.5 15.5A9 9 0 0 1 8.5 3.5a9 9 0 1 0 12 12z"/>',
@@ -34,8 +47,9 @@ const iconShapes={
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
 const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',database:'database',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
-let state={devices:[],emulators:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
+let controlsSerial='';
 const savedUi=vscode.getState?.()||{};
 const uiVersion=2;
 let openSections=new Set(restoreOpenSections(savedUi,uiVersion));
@@ -77,10 +91,11 @@ function render(){
  const locationOptions=locationDevices.length?locationDevices.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===locationState.serial?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">Start an emulator first</option>';
  const variants=state.variants||[],selected=state.selectedVariant||variants[0]?.id||'';
  const cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready',sqliteReady=state.sqliteStatus==='ready';
+ if(!online.some((d)=>d.serial===controlsSerial))controlsSerial=state.controlsSerial||online[0]?.serial||'';
  const build=buildSection(variants,selected,cliReady);
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
- const device=section('device','Devices',deviceStatus,deviceGrid(devices,avds));
- const inspector=inspectorSection(cliReady);
+ const device=section('device','Devices',deviceStatus,deviceSection(devices,avds,online,cliReady,adbReady));
+ const inspector=inspectorSection(cliReady,adbReady,online);
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady),'','Live Logcat output')));
@@ -133,19 +148,94 @@ function buildSection(variants,selected,cliReady){
  return section('build','Build',esc(label),body);
 }
 
+function deviceSection(devices,avds,online,cliReady,adbReady){
+ const grid=deviceGrid(devices,avds);
+ const create=emulatorCreateRow(cliReady);
+ const controls=online.length?deviceControlsPanel(online,adbReady):'';
+ return '<div class="device-section">'+grid+create+controls+'</div>';
+}
+
 function deviceGrid(devices,avds){
  const used=new Set();
  const avdCards=avds.map((name)=>{const running=devices.find((d)=>d.avdName===name);if(running)used.add(running.serial);return deviceCard({name,device:running,virtual:true})});
  const connectedCards=devices.filter((d)=>!used.has(d.serial)).map((device)=>deviceCard({name:device.description,device,virtual:device.serial.startsWith('emulator-')}));
  const cards=[...avdCards,...connectedCards];
- return '<div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card">No devices or emulators found</div>')+'</div>';
+ return '<div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card dotted"><strong>No devices yet</strong><span>Create an emulator profile to get started.</span></div>')+'</div>';
 }
 
-function deviceCard({name,device,virtual}){const online=device?.state==='device',id=device?.serial||name,op=state.operation?.id===`device:${id}`?state.operation:null,running=op?.status==='running',cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready';const actionIcon=operationVisual(op,icon(online?'stop':'play'));const action=online&&virtual?'<button class="pill danger-button device-action-button" data-stop="'+esc(device.serial)+'"'+(running||!adbReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+actionIcon+'<span>Stop</span></button>':!online&&virtual?'<button class="pill device-action-button" data-start="'+esc(name)+'"'+(running||!cliReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+actionIcon+'<span>Start</span></button>':'';const theme=online?'<div class="theme-toggle" aria-label="Device appearance"><button data-theme="light" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='light'?'active':'')+'" title="Use light mode"'+(adbReady?'':' disabled')+'>'+icon('sun')+'</button><button data-theme="dark" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='dark'?'active':'')+'" title="Use dark mode"'+(adbReady?'':' disabled')+'>'+icon('moon')+'</button></div>':'';return '<article class="device-card '+(online?'online':'')+'"><div class="device-card-head"><div class="device-icon">'+icon('phone')+'</div><span class="status-dot '+(online?'on':'')+'"></span></div><strong title="'+esc(name)+'">'+esc(name.replaceAll('_',' '))+'</strong><span class="device-meta">'+esc(device?.serial||(virtual?'Available emulator':'Connected device'))+'</span><div class="device-actions">'+theme+action+'</div></article>'}
+function emulatorCreateRow(cliReady){
+ const supported=state.emulatorCreateSupported!==false;
+ const ready=canCreateEmulator(cliReady,supported);
+ const profiles=state.emulatorProfiles?.length?state.emulatorProfiles:['medium_phone'];
+ const selected=profiles.includes(state.selectedEmulatorProfile)?state.selectedEmulatorProfile:profiles[0];
+ const options=profiles.map((profile)=>'<option value="'+esc(profile)+'"'+(profile===selected?' selected':'')+'>'+esc(profile.replaceAll('_',' '))+'</option>').join('');
+ const hint=!supported?'Unavailable on Windows':!cliReady?'Needs Android CLI':'Choose a device profile';
+ const createOp=state.operation?.id==='emulator-create'?state.operation:null;
+ return group(
+  row('Create AVD',selectWrap('emulator-profile',options,{disabled:!ready,label:'Emulator profile',title:selected})+actionButton('emulator-create','Create','secondary compact',!ready,createOp?.status==='running'),'',hint)
+ );
+}
 
-function inspectorAction(id,iconName,title,description,disabled=false){const op=state.operation?.id===id?state.operation:null,running=op?.status==='running';return '<button class="inspector-tile" data-action="'+id+'" title="'+esc(description)+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'><span class="inspector-tile-icon">'+operationVisual(op,icon(iconName))+'</span><span>'+esc(title)+'</span></button>'}
+function deviceControlsPanel(online,adbReady){
+ const serial=online.some((d)=>d.serial===controlsSerial)?controlsSerial:online[0].serial;
+ controlsSerial=serial;
+ const controls=state.deviceControls?.serial===serial?state.deviceControls:undefined;
+ const enabled=canUseDeviceControls(adbReady,serial);
+ const deviceOptions=online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===serial?' selected':'')+'>'+esc(d.description)+'</option>').join('');
+ const rotation=controls?.rotation??0;
+ const fontScale=controls?.fontScale??1;
+ const rotationControls='<div class="segmented control-segmented" role="group" aria-label="Rotation">'+ROTATION_PRESETS.map((item)=>'<button class="segment'+(item.value===rotation?' active':'')+'" data-rotate="'+item.value+'"'+(enabled?'':' disabled')+'>'+esc(item.label)+'</button>').join('')+'</div>';
+ const fontControls='<div class="segmented control-segmented" role="group" aria-label="Font scale">'+FONT_SCALE_PRESETS.map((item)=>'<button class="segment'+(item.value===fontScale?' active':'')+'" data-font="'+item.value+'"'+(enabled?'':' disabled')+'>'+esc(item.label)+'</button>').join('')+'</div>';
+ const overlays='<div class="segmented control-segmented" role="group" aria-label="Developer overlays">'
+  +overlayToggle('bounds','Bounds',controls?.layoutBounds,enabled)
+  +overlayToggle('touches','Taps',controls?.showTouches,enabled)
+  +overlayToggle('pointer','Pointer',controls?.pointerLocation,enabled)
+  +'</div>';
+ const packages=state.appPackages?.length?state.appPackages:(state.selectedAppPackage||state.applicationId?[state.selectedAppPackage||state.applicationId]:[]);
+ const selectedPackage=packages.includes(state.selectedAppPackage)?state.selectedAppPackage:(packages[0]||'');
+ const packageOptions=packages.length
+  ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selectedPackage?' selected':'')+'>'+esc(name)+'</option>').join('')
+  :'<option value="">Scan apps in App data</option>';
+ const permissionControls='<div class="permission-actions">'+COMMON_PERMISSIONS.map((item)=>'<button class="chip" data-permission="'+esc(item.permission)+'" data-grant="1"'+(enabled&&selectedPackage?'':' disabled')+' title="Grant '+esc(item.label)+'">'+esc(item.label)+'</button>').join('')+'</div>';
+ const isEmulator=serial.startsWith('emulator-');
+ const batteryLevel=controls?.batteryLevel;
+ const batteryOptions=BATTERY_LEVEL_PRESETS.map((level)=>'<option value="'+level+'"'+(batteryLevel===level?' selected':'')+'>'+level+'%</option>').join('');
+ const batteryRow=isEmulator
+  ?row('Battery',selectWrap('battery-level',batteryOptions,{disabled:!enabled,label:'Battery level'})+'<button class="secondary compact" data-battery-charging="'+(controls?.batteryCharging?0:1)+'"'+(enabled?'':' disabled')+'>'+(controls?.batteryCharging?'Unplug':'Plug in')+'</button>','','Emulator power')
+  :row('Battery','<span class="muted-inline">Emulator only</span>','','Physical devices unsupported');
+ return '<div class="device-controls">'
+  +'<div class="device-controls-label">Controls</div>'
+  +group(
+   row('Target',selectWrap('controls-device',deviceOptions,{disabled:!adbReady,label:'Controls device'}),'',enabled?'Live device':'Needs ADB')
+   +row('Rotate',rotationControls,'','Lock orientation')
+   +row('Font',fontControls,'','Display size')
+   +batteryRow
+   +row('Overlays',overlays,'','On-device guides')
+   +row('Package',selectWrap('controls-package',packageOptions,{disabled:!packages.length,label:'Permissions package'}),'','Permission target')
+   +row('Allow',permissionControls,'','Grant common runtime permissions')
+  )
+  +'</div>';
+}
 
-function inspectorSection(cliReady){const preview=state.screenshot?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"><div class="inspector-preview-footer"><span>'+esc(state.screenshotSaved?'Saved copy':'Not saved')+'</span>'+actionButton('screenshot-save','Save as…','secondary compact')+'</div></div>':'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">'+icon('inspector')+'</span><strong>Device viewfinder</strong><span>Capture a screen to preview it here.</span></div>';return section('inspector','Inspector',state.screenshot?(state.screenshotSaved?'Saved':'Unsaved preview'):cliReady?'Ready':'Needs CLI','<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady)+'</div></div>')}
+function overlayToggle(id,label,active,enabled){
+ return '<button class="segment'+(active?' active':'')+'" data-overlay="'+id+'" data-enabled="'+(active?0:1)+'"'+(enabled?'':' disabled')+'>'+esc(label)+'</button>';
+}
+
+function deviceCard({name,device,virtual}){const online=device?.state==='device',id=device?.serial||name,op=state.operation?.id===`device:${id}`?state.operation:null,running=op?.status==='running',cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready';const actionIcon=operationVisual(op,icon(online?'stop':'play'));const action=online&&virtual?'<button class="pill danger-button device-action-button" data-stop="'+esc(device.serial)+'"'+(running||!adbReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+actionIcon+'<span>Stop</span></button>':!online&&virtual?'<button class="pill device-action-button" data-start="'+esc(name)+'"'+(running||!cliReady?' disabled':'')+(running?' aria-busy="true"':'')+'>'+actionIcon+'<span>Start</span></button>':'';const theme=online?'<div class="theme-toggle" aria-label="Device appearance"><button data-theme="light" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='light'?'active':'')+'" title="Use light mode"'+(adbReady?'':' disabled')+'>'+icon('sun')+'</button><button data-theme="dark" data-serial="'+esc(device.serial)+'" class="'+(device.theme==='dark'?'active':'')+'" title="Use dark mode"'+(adbReady?'':' disabled')+'>'+icon('moon')+'</button></div>':'';return '<article class="device-card '+(online?'online':'')+(controlsSerial&&device?.serial===controlsSerial?' selected':'')+'"><div class="device-card-head"><div class="device-icon">'+icon('phone')+'</div><span class="status-dot '+(online?'on':'')+'"></span></div><strong title="'+esc(name)+'">'+esc(name.replaceAll('_',' '))+'</strong><span class="device-meta">'+esc(device?.serial||(virtual?'Available emulator':'Connected device'))+'</span><div class="device-actions">'+theme+action+'</div></article>'}
+
+function inspectorAction(id,iconName,title,description,disabled=false){const op=state.operation?.id===id?state.operation:null,running=op?.status==='running';return '<button class="inspector-tile" data-action="'+id+'" title="'+esc(description)+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(iconName))+'<span>'+esc(title)+'</span></button>'}
+
+function inspectorSection(cliReady,adbReady,online){
+ const recording=Boolean(state.recording?.active);
+ const status=recording?'Recording…':state.screenshot?(state.screenshotSaved?'Saved':'Unsaved preview'):cliReady||adbReady?'Ready':!cliReady?'Needs CLI':'Needs ADB';
+ const preview=state.screenshot
+  ?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"><div class="inspector-preview-footer"><span>'+esc(state.screenshotSaved?'Saved copy':'Not saved')+'</span>'+actionButton('screenshot-save','Save as…','secondary compact')+'</div></div>'
+  :'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">'+icon('inspector')+'</span><strong>Device viewfinder</strong><span>Capture a screen or start a recording.</span></div>';
+ const recordAction=recording
+  ?inspectorAction('screen-record-stop','stop','Stop','Stop recording and save the video',!adbReady)
+  :inspectorAction('screen-record-start','record','Record','Capture up to 3 minutes of device video',!adbReady||!online.length||recording);
+ return section('inspector','Inspector',status,'<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady)+recordAction+'</div>'+(recording?'<div class="recording-banner"><span class="status-dot on"></span>Recording on '+esc(state.recording.serial)+'</div>':'')+'</div>');
+}
 
 function databaseSection(deviceOptions,adbReady,sqliteReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
@@ -254,8 +344,17 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||document.getElementById('controls-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
+ document.getElementById('emulator-profile')?.addEventListener('change',(e)=>send('emulator-profile',{profile:e.target.value}));
+ document.getElementById('controls-device')?.addEventListener('change',(e)=>{controlsSerial=e.target.value;send('controls-serial',{serial:controlsSerial})});
+ document.getElementById('controls-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
+ document.getElementById('battery-level')?.addEventListener('change',(e)=>send('controls-battery-level',{serial:controlsSerial,level:Number(e.target.value)}));
+ app.querySelectorAll('[data-rotate]').forEach((el)=>el.addEventListener('click',()=>send('controls-rotate',{serial:controlsSerial,rotation:Number(el.dataset.rotate)})));
+ app.querySelectorAll('[data-font]').forEach((el)=>el.addEventListener('click',()=>send('controls-font',{serial:controlsSerial,scale:Number(el.dataset.font)})));
+ app.querySelectorAll('[data-overlay]').forEach((el)=>el.addEventListener('click',()=>send('controls-overlay',{serial:controlsSerial,overlay:el.dataset.overlay,enabled:el.dataset.enabled==='1'})));
+ app.querySelectorAll('[data-battery-charging]').forEach((el)=>el.addEventListener('click',()=>send('controls-battery-charging',{serial:controlsSerial,charging:el.dataset.batteryCharging==='1'})));
+ app.querySelectorAll('[data-permission]').forEach((el)=>el.addEventListener('click',()=>send('controls-permission',{serial:controlsSerial,packageName:document.getElementById('controls-package')?.value||state.selectedAppPackage||state.applicationId||'',permission:el.dataset.permission,grant:el.dataset.grant==='1'})));
  document.getElementById('app-package')?.addEventListener('change',(e)=>send('app-package',{packageName:e.target.value}));
  document.getElementById('app-device')?.addEventListener('change',(e)=>send('app-packages',{serial:e.target.value}));
  document.getElementById('deeplink-uri')?.addEventListener('input',(e)=>{deepLinkDraft=e.target.value;updateDeepLinkButton();saveUi()});

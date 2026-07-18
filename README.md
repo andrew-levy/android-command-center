@@ -38,8 +38,9 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Select discovered Gradle build variants, sync dependencies, run apps, or clean the project
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
-- See available and connected devices together, start or stop emulators independently, and switch device light/dark mode
-- Capture normal or annotated screenshots, preview them in the panel, and choose where to save them
+- See available and connected devices together, create AVD profiles, start or stop emulators, and switch device light/dark mode
+- Control a live device from the Devices section: rotate, font scale, emulator battery, developer overlays, and common runtime permissions
+- Capture normal or annotated screenshots, record the screen, preview captures in the panel, and choose where to save them
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
 - Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device
@@ -73,8 +74,7 @@ The webview is presentation-only. Extension-host code invokes the CLI with argum
 1. Parse `android describe` into build-target and artifact pickers.
 2. Add a structured layout-tree inspector with click-to-highlight.
 3. Add Journey authoring/running and test result views.
-4. Add device actions (rotation, permissions, recordings).
-5. Expose stable VS Code commands so agents and tasks can trigger the same workflows.
+4. Expose stable VS Code commands so agents and tasks can trigger the same workflows.
 
 ## Database inspector
 

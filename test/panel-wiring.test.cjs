@@ -93,3 +93,27 @@ test('SQLite is configurable and represented in toolchain state', () => {
   assert.match(panel, /dependencyRow\('SQLite',state\.sqliteStatus,state\.sqliteVersion,state\.sqliteMessage\)/);
   assert.match(extension, /run\(sqlite\(\), \['-version'\], undefined, REFRESH_CHECK_TIMEOUT_MS\)/);
 });
+
+test('Devices section hosts emulator create and live controls without a new section', () => {
+  assert.match(panel, /function deviceSection\(/);
+  assert.match(panel, /emulatorCreateRow\(cliReady\)/);
+  assert.match(panel, /deviceControlsPanel\(online,adbReady\)/);
+  assert.match(panel, /actionButton\('emulator-create','Create'/);
+  assert.match(panel, /data-rotate=/);
+  assert.match(panel, /data-font=/);
+  assert.match(panel, /data-overlay=/);
+  assert.match(panel, /data-permission=/);
+  assert.match(extension, /case 'emulator-create': await this\.createEmulator/);
+  assert.match(extension, /case 'controls-rotate': await this\.setDeviceRotation/);
+  assert.match(extension, /\['emulator', 'create', '--list-profiles'\]/);
+  assert.doesNotMatch(panel, /section\('controls'/);
+});
+
+test('Inspector hosts screen recording beside capture actions', () => {
+  assert.match(panel, /inspectorAction\('screen-record-start'/);
+  assert.match(panel, /inspectorAction\('screen-record-stop'/);
+  assert.match(extension, /case 'screen-record-start': await this\.startScreenRecord/);
+  assert.match(extension, /case 'screen-record-stop': await this\.stopScreenRecord/);
+  assert.match(extension, /screenrecord/);
+  assert.match(extension, /RECORDING_SAVE_DIR_KEY/);
+});

@@ -2,9 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  emulatorCreateSupported,
   isCompleteDeepLink,
   isMissingExecutable,
+  nearestFontScale,
+  parseBatteryDump,
   parseDevices,
+  parseEmulatorProfiles,
   summarizeAdb,
   variantFromTask,
 } = require('../dist/core.js');
@@ -49,4 +53,22 @@ test('deep link and missing executable validation cover expected boundaries', ()
 test('summarizeAdb selects the user-facing activity result', () => {
   assert.equal(summarizeAdb('Starting: Intent\nStatus: ok\nActivity: example/.MainActivity'), 'Status: ok');
   assert.equal(summarizeAdb('Starting: Intent'), '');
+});
+
+test('emulator profile parsing keeps clean profile ids', () => {
+  assert.deepEqual(
+    parseEmulatorProfiles('Available profiles:\nmedium_phone\nlarge_phone - Large phone\n--help\n'),
+    ['medium_phone', 'large_phone'],
+  );
+  assert.equal(emulatorCreateSupported('darwin'), true);
+  assert.equal(emulatorCreateSupported('win32'), false);
+});
+
+test('device control helpers normalize font scale and battery dumps', () => {
+  assert.equal(nearestFontScale(1.12), 1.15);
+  assert.equal(nearestFontScale(0.9), 0.85);
+  assert.deepEqual(parseBatteryDump('Current Battery Service state:\n  level: 15\n  status: 3\n  USB powered: false\n'), {
+    level: 15,
+    charging: false,
+  });
 });

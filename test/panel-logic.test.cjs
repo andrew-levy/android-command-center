@@ -3,8 +3,11 @@ const assert = require('node:assert/strict');
 
 const {
   buildAvailability,
+  canCreateEmulator,
   canPlayRoute,
+  canUseDeviceControls,
   parseCoords,
+  parseEmulatorProfiles,
   restoreOpenSections,
 } = require('../media/panel-logic.js');
 
@@ -31,4 +34,13 @@ test('route playback requires ADB and an emulator serial', () => {
   assert.equal(canPlayRoute(true, ''), false);
   assert.equal(canPlayRoute(true, 'physical-123'), false);
   assert.equal(canPlayRoute(false, 'emulator-5554'), false);
+});
+
+test('emulator create and device controls gate on the right dependencies', () => {
+  assert.equal(canCreateEmulator(true, true), true);
+  assert.equal(canCreateEmulator(true, false), false);
+  assert.equal(canCreateEmulator(false, true), false);
+  assert.equal(canUseDeviceControls(true, 'emulator-5554'), true);
+  assert.equal(canUseDeviceControls(false, 'emulator-5554'), false);
+  assert.deepEqual(parseEmulatorProfiles('medium_phone\nlarge_desktop\n'), ['medium_phone', 'large_desktop']);
 });

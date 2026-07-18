@@ -2,6 +2,14 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.9 - 2026-07-18
+
+### Added
+
+- Create emulator AVDs from Android CLI profiles directly in the Devices section.
+- Device controls in Devices: rotation, font scale, emulator battery, on-device overlays (bounds/taps/pointer), and common permission grants.
+- Screen recording in Inspector with stop-and-save to a chosen destination.
+
 ## 0.1.8 - 2026-07-16
 
 ### Added

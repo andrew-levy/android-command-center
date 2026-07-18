@@ -23,5 +23,54 @@
   return Boolean(adbReady&&String(serial||'').startsWith('emulator-'));
  }
 
- return {parseCoords,restoreOpenSections,buildAvailability,canPlayRoute};
+ const FONT_SCALE_PRESETS=[
+  {id:'small',label:'S',value:0.85},
+  {id:'default',label:'M',value:1},
+  {id:'large',label:'L',value:1.15},
+  {id:'largest',label:'XL',value:1.3},
+ ];
+ const ROTATION_PRESETS=[
+  {id:'0',label:'0°',value:0},
+  {id:'90',label:'90°',value:1},
+  {id:'180',label:'180°',value:2},
+  {id:'270',label:'270°',value:3},
+ ];
+ const BATTERY_LEVEL_PRESETS=[5,15,50,85,100];
+ const COMMON_PERMISSIONS=[
+  {id:'location',label:'Location',permission:'android.permission.ACCESS_FINE_LOCATION'},
+  {id:'camera',label:'Camera',permission:'android.permission.CAMERA'},
+  {id:'mic',label:'Mic',permission:'android.permission.RECORD_AUDIO'},
+  {id:'notifications',label:'Alerts',permission:'android.permission.POST_NOTIFICATIONS'},
+ ];
+
+ function parseEmulatorProfiles(output){
+  return [...new Set(String(output||'')
+   .split(/\r?\n/)
+   .map((line)=>line.trim())
+   .filter((line)=>line&&!/^(profile|name|available|device profiles|--)/i.test(line))
+   .map((line)=>line.split(/\s+/)[0]||'')
+   .filter((name)=>/^[A-Za-z0-9._-]+$/.test(name)))];
+ }
+
+ function canCreateEmulator(cliReady,emulatorCreateSupported){
+  return Boolean(cliReady&&emulatorCreateSupported);
+ }
+
+ function canUseDeviceControls(adbReady,serial){
+  return Boolean(adbReady&&serial);
+ }
+
+ return {
+  parseCoords,
+  restoreOpenSections,
+  buildAvailability,
+  canPlayRoute,
+  parseEmulatorProfiles,
+  canCreateEmulator,
+  canUseDeviceControls,
+  FONT_SCALE_PRESETS,
+  ROTATION_PRESETS,
+  BATTERY_LEVEL_PRESETS,
+  COMMON_PERMISSIONS,
+ };
 });
