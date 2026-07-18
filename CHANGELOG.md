@@ -10,6 +10,7 @@ All notable changes to Android Command Center are documented here.
 - Per-device settings gear on online cards for theme, rotation, font scale, emulator battery, and on-device overlays.
 - Common runtime permission grants in App data alongside package actions.
 - Screen recording in Inspector with stop-and-save to a chosen destination.
+- Performance vitals monitor: FPS, jank, memory, slow frames, sparkline, reset, and raw dump.
 
 ## 0.1.8 - 2026-07-16
 

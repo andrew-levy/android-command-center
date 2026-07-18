@@ -22,6 +22,7 @@ const iconShapes={
  appdata:'<path d="m12 2 8 4-8 4-8-4zM4 10l8 4 8-4M4 14l8 4 8-4"/>',
  location:'<path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>',
  stream:'<path d="M3 12h4l2-7 4 14 2-7h6"/>',
+ performance:'<path d="M4 19V5M4 19h16M8 15v4M12 11v8M16 7v12"/>',
  toolchain:'<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
  play:'<path d="m8 5 11 7-11 7z"/>',
  pause:'<path d="M9 5v14M15 5v14"/>',
@@ -46,8 +47,8 @@ const iconShapes={
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
-const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',database:'database',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',performance:'performance',database:'database',appdata:'appdata',location:'location',stream:'stream'};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
 let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
 let controlsSerial='';
 let openDeviceMenu='';
@@ -98,12 +99,13 @@ function render(){
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceSection(devices,avds,cliReady,adbReady));
  const inspector=inspectorSection(cliReady,adbReady,online);
+ const performance=performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady);
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady),'','Live Logcat output')));
  const loadingToast=state.initializing?'<div class="loading-toast" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading tools, devices, and app data…</span></div>':'';
  const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+performance+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
  bind();
  restoreScrollState(scrollState);
 }
@@ -247,6 +249,64 @@ function deviceSettingsMenu(device,adbReady){
 
 function inspectorAction(id,iconName,title,description,disabled=false){const op=state.operation?.id===id?state.operation:null,running=op?.status==='running';return '<button class="inspector-tile" data-action="'+id+'" title="'+esc(description)+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(iconName))+'<span>'+esc(title)+'</span></button>'}
 
+function performanceSection(deviceOptions,adbReady){
+ const perf=state.performance||{monitoring:false,frameTimesMs:[],issues:[]};
+ const packages=state.appPackages?.length?state.appPackages:(state.selectedAppPackage||state.applicationId||perf.packageName?[state.selectedAppPackage||state.applicationId||perf.packageName]:[]);
+ const selectedPackage=packages.includes(perf.packageName)?perf.packageName:(packages.includes(state.selectedAppPackage)?state.selectedAppPackage:(packages[0]||''));
+ const packageOptions=packages.length
+  ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selectedPackage?' selected':'')+'>'+esc(name)+'</option>').join('')
+  :'<option value="">Scan apps in App data</option>';
+ const ready=adbReady&&Boolean(selectedPackage)&&(state.devices||[]).some((device)=>device.state==='device');
+ const status=perf.monitoring
+  ?'<span class="location-live"><span class="status-dot on"></span>Live</span>'
+  :ready?'Ready':!adbReady?'Needs ADB':'Pick a package';
+ const fps=perf.fps!=null?String(perf.fps):'—';
+ const jank=perf.jankPercent!=null?Math.round(perf.jankPercent)+'%':'—';
+ const memory=perf.memoryMb!=null?Math.round(perf.memoryMb):'—';
+ const slow=perf.slowFrames!=null?String(perf.slowFrames):'—';
+ const jankTone=perf.jankPercent!=null&&perf.jankPercent>=5?' warn':'';
+ const slowTone=perf.slowFrames!=null&&perf.slowFrames>0?' warn':'';
+ const vitals='<div class="perf-vitals">'
+  +'<div class="perf-vital"><strong>'+esc(fps)+'</strong><span>FPS</span></div>'
+  +'<div class="perf-vital'+jankTone+'"><strong>'+esc(jank)+'</strong><span>jank</span></div>'
+  +'<div class="perf-vital"><strong>'+esc(memory)+'</strong><span>MB</span></div>'
+  +'<div class="perf-vital'+slowTone+'"><strong>'+esc(slow)+'</strong><span>slow</span></div>'
+  +'</div>';
+ const spark=performanceSparkline(perf.frameTimesMs||[]);
+ const actions=perf.monitoring
+  ?actionButton('performance-stop','Stop','secondary compact')+actionButton('performance-reset','Reset','secondary compact')+actionButton('performance-dump','Dump','secondary compact')
+  :actionButton('performance-start','Monitor','primary compact',!ready)+actionButton('performance-reset','Reset','secondary compact',!ready)+actionButton('performance-dump','Dump','secondary compact',!ready);
+ const issues=(perf.issues||[]).length
+  ?'<div class="perf-issues"><div class="micro-heading"><span>Issues</span><span>'+perf.issues.length+'</span></div>'+perf.issues.map((item)=>'<div class="perf-issue">'+esc(item)+'</div>').join('')+'</div>'
+  :perf.monitoring?'<p class="muted">Sampling FPS, jank, and memory…</p>':'<p class="muted">Start monitoring to sample FPS, jank, and memory.</p>';
+ const body=group(
+  row('Device',selectWrap('perf-device',deviceOptions,{disabled:!adbReady||perf.monitoring,label:'Performance device'}),'','Sample target')
+  +row('Package',selectWrap('perf-package',packageOptions,{disabled:!packages.length||perf.monitoring,label:'Performance package'}),'','App process')
+  +row('Controls','<div class="action-strip perf-actions">'+actions+'</div>','',perf.monitoring?'Live sample':'gfxinfo + meminfo')
+ )+vitals+spark+issues+(perf.error?'<div class="location-error">'+esc(perf.error)+'</div>':'');
+ return section('performance','Performance',status,body);
+}
+
+function performanceSparkline(values){
+ if(!values.length){
+  return '<div class="perf-spark empty dotted" aria-hidden="true"><span>frame time</span></div>';
+ }
+ const width=240,height=42,pad=3;
+ const max=Math.max(20,...values);
+ const step=values.length>1?(width-pad*2)/(values.length-1):0;
+ const points=values.map((value,index)=>{
+  const x=pad+index*step;
+  const y=height-pad-((Math.min(max,value)/max)*(height-pad*2));
+  return x.toFixed(1)+','+y.toFixed(1);
+ }).join(' ');
+ const threshold=height-pad-((16.67/max)*(height-pad*2));
+ return '<div class="perf-spark" role="img" aria-label="Frame time sparkline">'
+  +'<svg viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none">'
+  +'<line class="perf-threshold" x1="0" y1="'+threshold.toFixed(1)+'" x2="'+width+'" y2="'+threshold.toFixed(1)+'"/>'
+  +'<polyline class="perf-line" points="'+points+'"/>'
+  +'</svg><span>frame time</span></div>';
+}
+
 function inspectorSection(cliReady,adbReady,online){
  const recording=Boolean(state.recording?.active);
  const status=recording?'Recording…':state.screenshot?(state.screenshotSaved?'Saved':'Unsaved preview'):cliReady||adbReady?'Ready':!cliReady?'Needs CLI':'Needs ADB';
@@ -368,9 +428,11 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||openDeviceMenu||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||openDeviceMenu||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('emulator-profile')?.addEventListener('change',(e)=>send('emulator-profile',{profile:e.target.value}));
+ document.getElementById('perf-device')?.addEventListener('change',(e)=>send('performance-serial',{serial:e.target.value}));
+ document.getElementById('perf-package')?.addEventListener('change',(e)=>send('performance-package',{packageName:e.target.value}));
  app.querySelectorAll('[data-device-menu]').forEach((el)=>el.addEventListener('click',(event)=>{event.stopPropagation();const serial=el.dataset.deviceMenu;if(openDeviceMenu===serial){openDeviceMenu='';render();return}openDeviceMenu=serial;controlsSerial=serial;send('controls-serial',{serial});render()}));
  app.querySelectorAll('[data-device-menu-close]').forEach((el)=>el.addEventListener('click',(event)=>{event.stopPropagation();openDeviceMenu='';render()}));
  document.getElementById('battery-level')?.addEventListener('change',(e)=>send('controls-battery-level',{serial:openDeviceMenu||controlsSerial,level:Number(e.target.value)}));

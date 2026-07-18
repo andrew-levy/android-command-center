@@ -43,6 +43,36 @@ else{
  else if(command[0]==='shell'&&command[1]==='am'&&command[2]==='start')process.stdout.write('Status: ok\nActivity: com.example.androidclitest/.MainActivity\n');
  else if(command[0]==='shell'&&command[1]==='am'&&command[2]==='force-stop')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='pm'&&command[2]==='clear')process.stdout.write('Success\n');
+ else if(command[0]==='shell'&&command[1]==='dumpsys'&&command[2]==='gfxinfo'){
+  if(command.includes('reset'))process.stdout.write('Graphics stats reset.\n');
+  else process.stdout.write([
+   'Applications Graphics Acceleration Info:',
+   'Total frames rendered: 120',
+   'Janky frames: 6 (5.00%)',
+   '50th percentile: 12ms',
+   'Number Missed Vsync: 3',
+   '---PROFILEDATA---',
+   'Flags,IntendedVsync,Vsync,FrameCompleted',
+   '0,1000000000,1000000000,1012000000',
+   '0,1016666667,1016666667,1030000000',
+   '0,1033333334,1033333334,1055000000',
+   '0,1050000001,1050000001,1064000000',
+   '---PROFILEDATA---',
+   '',
+  ].join('\n'));
+ }
+ else if(command[0]==='shell'&&command[1]==='dumpsys'&&command[2]==='meminfo'){
+  process.stdout.write([
+   'Applications Memory Usage:',
+   'App Summary',
+   '                       Pss(KB)',
+   '                       ------',
+   '           Java Heap:    42000',
+   '         Native Heap:    18000',
+   '                TOTAL:   188416',
+   '',
+  ].join('\n'));
+ }
  else if(command[0]==='shell'&&command[1]==='screenrecord')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='pkill')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='rm')process.stdout.write('');

@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } from './databaseInspector';
 import {
   COMMON_PERMISSIONS,
+  buildPerformanceIssues,
   emulatorCreateSupported,
   isCompleteDeepLink,
   isMissingExecutable,
@@ -14,6 +15,8 @@ import {
   parseBatteryDump,
   parseDevices,
   parseEmulatorProfiles,
+  parseGfxInfo,
+  parseMemInfo,
   parseSettingsFloat,
   parseSettingsInt,
   summarizeAdb,
@@ -21,6 +24,7 @@ import {
   type BuildVariant,
   type Device,
   type DeviceControls,
+  type PerformanceMetrics,
 } from './core';
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +39,7 @@ const CONTROLS_SERIAL_KEY = 'androidCli.controlsSerial.v1';
 const SCREEN_RECORD_REMOTE = '/sdcard/Download/acc-screenrecord.mp4';
 const REFRESH_CHECK_TIMEOUT_MS = 12_000;
 const LAYOUT_BOUNDS_POKE_CODE = 1599295570;
+const PERFORMANCE_POLL_MS = 1_000;
 const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
 const SUCCESS_HOLD_MS = 2_000;
@@ -43,6 +48,19 @@ const SUCCESS_EXIT_MS = 180;
 type LinkResult = { ok: boolean; message: string };
 type Operation = { id: string; status: 'running' | 'success' | 'success-exit' | 'error'; message: string };
 type DependencyStatus = 'checking' | 'ready' | 'missing' | 'error';
+type PerformanceState = {
+  serial?: string;
+  packageName?: string;
+  monitoring: boolean;
+  fps?: number;
+  jankPercent?: number;
+  memoryMb?: number;
+  slowFrames?: number;
+  frameTimesMs: number[];
+  issues: string[];
+  error?: string;
+  updatedAt?: number;
+};
 type DashboardState = {
   cliAvailable: boolean;
   cliStatus: DependencyStatus;
@@ -82,6 +100,7 @@ type DashboardState = {
   screenshot?: string;
   screenshotSaved?: boolean;
   recording?: { serial: string; active: boolean };
+  performance: PerformanceState;
   linkResult?: LinkResult;
   operation?: Operation;
   testOpenSections?: string[];
@@ -113,6 +132,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private screenshotFile?: vscode.Uri;
   private screenRecordProcess?: ChildProcess;
   private screenRecordSerial?: string;
+  private performancePoll?: NodeJS.Timeout;
+  private performanceSampling = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
@@ -143,6 +164,13 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       appPackages: cached?.appPackages ?? [],
       appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
+      performance: {
+        serial: cached?.performance?.serial,
+        packageName: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
+        monitoring: false,
+        frameTimesMs: [],
+        issues: [],
+      },
       initializing: true,
       testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
@@ -164,6 +192,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   dispose(): void {
     if (this.devicePoll) clearInterval(this.devicePoll);
     this.devicePoll = undefined;
+    this.stopPerformanceMonitor();
     void this.stopScreenRecordProcess();
     void this.databases.dispose();
     if (this.screenshotFile) void vscode.workspace.fs.delete(this.screenshotFile, { useTrash: false }).then(undefined, () => undefined);
@@ -327,6 +356,12 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'screenshot-save': await this.saveScreenshot(); return;
         case 'screen-record-start': await this.startScreenRecord(String(message.serial ?? '')); return;
         case 'screen-record-stop': await this.stopScreenRecord(true); return;
+        case 'performance-serial': this.setPerformanceSerial(String(message.serial ?? '')); return;
+        case 'performance-package': this.setPerformancePackage(String(message.packageName ?? '')); return;
+        case 'performance-start': await this.startPerformanceMonitor(String(message.serial ?? ''), String(message.packageName ?? '')); return;
+        case 'performance-stop': this.stopPerformanceMonitor(); this.render(); return;
+        case 'performance-reset': await this.resetPerformanceCounters(); return;
+        case 'performance-dump': await this.dumpPerformance(); return;
         case 'layout': await this.layout(); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
@@ -944,6 +979,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (!trimmed) return;
     this.state.selectedAppPackage = trimmed;
     this.state.appDataMessage = undefined;
+    this.state.performance = { ...this.state.performance, packageName: trimmed };
     await this.context.workspaceState.update(APP_PACKAGE_KEY, trimmed);
     this.persistCache();
     this.render();
@@ -1118,6 +1154,139 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     return this.context.storageUri ?? vscode.Uri.joinPath(this.context.globalStorageUri, 'workspace-less');
   }
 
+  private setPerformanceSerial(serial: string): void {
+    this.state.performance = { ...this.state.performance, serial: serial || undefined, error: undefined };
+    this.render();
+  }
+
+  private setPerformancePackage(packageName: string): void {
+    this.state.performance = { ...this.state.performance, packageName: packageName || undefined, error: undefined };
+    this.render();
+  }
+
+  private performanceTarget(): { serial: string; packageName: string } {
+    const online = this.state.devices.filter((device) => device.state === 'device');
+    const serial = this.state.performance.serial
+      && online.some((device) => device.serial === this.state.performance.serial)
+      ? this.state.performance.serial
+      : online[0]?.serial;
+    const packageName = this.state.performance.packageName
+      || this.state.selectedAppPackage
+      || this.state.applicationId;
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    if (!packageName) throw new Error('Choose a package to monitor.');
+    return { serial, packageName };
+  }
+
+  private async startPerformanceMonitor(serial: string, packageName: string): Promise<void> {
+    if (serial) this.state.performance.serial = serial;
+    if (packageName) this.state.performance.packageName = packageName;
+    const target = this.performanceTarget();
+    this.state.performance = {
+      ...this.state.performance,
+      serial: target.serial,
+      packageName: target.packageName,
+      monitoring: true,
+      error: undefined,
+      issues: [],
+    };
+    this.render();
+    if (this.performancePoll) clearInterval(this.performancePoll);
+    await this.samplePerformance();
+    this.performancePoll = setInterval(() => void this.samplePerformance(), PERFORMANCE_POLL_MS);
+  }
+
+  private stopPerformanceMonitor(): void {
+    if (this.performancePoll) clearInterval(this.performancePoll);
+    this.performancePoll = undefined;
+    this.performanceSampling = false;
+    this.state.performance = { ...this.state.performance, monitoring: false };
+  }
+
+  private async samplePerformance(): Promise<void> {
+    if (this.performanceSampling || !this.state.performance.monitoring) return;
+    this.performanceSampling = true;
+    try {
+      const { serial, packageName } = this.performanceTarget();
+      const [gfxResult, memResult] = await Promise.allSettled([
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'framestats'], undefined, 8_000),
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'meminfo', packageName], undefined, 8_000),
+      ]);
+      if (gfxResult.status !== 'fulfilled') throw gfxResult.reason;
+      const gfx = parseGfxInfo(gfxResult.value);
+      const memoryMb = memResult.status === 'fulfilled' ? parseMemInfo(memResult.value) : this.state.performance.memoryMb;
+      const metrics: PerformanceMetrics = { ...gfx, memoryMb };
+      this.state.performance = {
+        ...this.state.performance,
+        serial,
+        packageName,
+        fps: metrics.fps,
+        jankPercent: metrics.jankPercent,
+        memoryMb: metrics.memoryMb,
+        slowFrames: metrics.slowFrames,
+        frameTimesMs: metrics.frameTimesMs.length
+          ? metrics.frameTimesMs
+          : this.state.performance.frameTimesMs,
+        issues: buildPerformanceIssues(metrics),
+        error: undefined,
+        updatedAt: Date.now(),
+      };
+      this.render();
+    } catch (error) {
+      this.state.performance = {
+        ...this.state.performance,
+        error: messageOf(error),
+        issues: [],
+      };
+      this.render();
+    } finally {
+      this.performanceSampling = false;
+    }
+  }
+
+  private async resetPerformanceCounters(): Promise<void> {
+    const { serial, packageName } = this.performanceTarget();
+    await this.busy('Resetting graphics counters…', () =>
+      run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'reset']),
+    'performance-reset', 'Graphics counters reset');
+    this.state.performance = {
+      ...this.state.performance,
+      fps: undefined,
+      jankPercent: undefined,
+      slowFrames: undefined,
+      frameTimesMs: [],
+      issues: [],
+      error: undefined,
+    };
+    if (this.state.performance.monitoring) await this.samplePerformance();
+    else this.render();
+  }
+
+  private async dumpPerformance(): Promise<void> {
+    const { serial, packageName } = this.performanceTarget();
+    const content = await this.busy('Dumping performance…', async () => {
+      const [gfx, mem] = await Promise.all([
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'framestats'], undefined, 20_000),
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'meminfo', packageName], undefined, 20_000),
+      ]);
+      return [
+        `# Performance dump`,
+        `# device: ${serial}`,
+        `# package: ${packageName}`,
+        `# captured: ${new Date().toISOString()}`,
+        '',
+        '## gfxinfo framestats',
+        gfx.trim(),
+        '',
+        '## meminfo',
+        mem.trim(),
+        '',
+      ].join('\n');
+    }, 'performance-dump', 'Performance dump opened');
+    const document = await vscode.workspace.openTextDocument({ language: 'markdown', content });
+    await vscode.window.showTextDocument(document, { preview: true });
+  }
+
   private persistCache(): void {
     const {
       busy: _busy,
@@ -1126,6 +1295,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       screenshotSaved: _screenshotSaved,
       recording: _recording,
       deviceControls: _deviceControls,
+      performance: performanceState,
       linkResult: _result,
       operation: _operation,
       database: _database,
@@ -1136,7 +1306,16 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       testOpenSections: _testOpenSections,
       ...cache
     } = this.state;
-    void this.context.workspaceState.update(CACHE_KEY, cache);
+    void this.context.workspaceState.update(CACHE_KEY, {
+      ...cache,
+      performance: {
+        serial: performanceState.serial,
+        packageName: performanceState.packageName,
+        monitoring: false,
+        frameTimesMs: [],
+        issues: [],
+      },
+    });
   }
 
   private render(): void { void this.view?.webview.postMessage({ type: 'state', state: this.state }); }

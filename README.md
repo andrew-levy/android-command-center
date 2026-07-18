@@ -42,6 +42,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Open a per-device settings gear for theme, rotation, font scale, emulator battery, and developer overlays
 - Grant common runtime permissions from App data alongside force-stop and clear actions
 - Capture normal or annotated screenshots, record the screen, preview captures in the panel, and choose where to save them
+- Monitor live performance vitals (FPS, jank, memory, slow frames) for a selected package
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
 - Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device

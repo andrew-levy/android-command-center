@@ -126,3 +126,14 @@ test('Inspector hosts screen recording beside capture actions', () => {
   assert.match(extension, /screenrecord/);
   assert.match(extension, /RECORDING_SAVE_DIR_KEY/);
 });
+
+test('Performance section monitors gfxinfo vitals without becoming a profiler', () => {
+  assert.match(panel, /function performanceSection\(/);
+  assert.match(panel, /section\('performance','Performance'/);
+  assert.match(panel, /actionButton\('performance-start','Monitor'/);
+  assert.match(panel, /function performanceSparkline\(/);
+  assert.match(extension, /case 'performance-start': await this\.startPerformanceMonitor/);
+  assert.match(extension, /dumpsys', 'gfxinfo'/);
+  assert.match(extension, /dumpsys', 'meminfo'/);
+  assert.match(extension, /parseGfxInfo/);
+});

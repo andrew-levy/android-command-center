@@ -92,6 +92,95 @@ export function emulatorCreateSupported(platform = process.platform): boolean {
   return platform !== 'win32';
 }
 
+export type PerformanceMetrics = {
+  totalFrames: number;
+  jankyFrames: number;
+  jankPercent: number;
+  fps?: number;
+  slowFrames: number;
+  frameTimesMs: number[];
+  memoryMb?: number;
+};
+
+export function parseFrameStats(output: string): number[] {
+  const lines = output.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => /^Flags,/i.test(line.trim()));
+  if (headerIndex < 0) return [];
+  const header = lines[headerIndex].split(',').map((item) => item.trim());
+  const intendedIdx = header.findIndex((item) => /^IntendedVsync$/i.test(item));
+  const completedIdx = header.findIndex((item) => /^FrameCompleted$/i.test(item));
+  if (intendedIdx < 0 || completedIdx < 0) return [];
+  const times: number[] = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('---') || /^[A-Za-z]/.test(trimmed)) break;
+    const cols = trimmed.split(',');
+    const intended = Number(cols[intendedIdx]);
+    const completed = Number(cols[completedIdx]);
+    if (!Number.isFinite(intended) || !Number.isFinite(completed) || completed <= intended) continue;
+    const ms = (completed - intended) / 1_000_000;
+    if (ms > 0 && ms < 5_000) times.push(ms);
+  }
+  return times.slice(-40);
+}
+
+export function parseGfxInfo(output: string): Omit<PerformanceMetrics, 'memoryMb'> {
+  const totalFrames = Number(output.match(/Total frames rendered:\s*(\d+)/i)?.[1] ?? 0);
+  const jankyFrames = Number(output.match(/Janky frames:\s*(\d+)/i)?.[1] ?? 0);
+  const explicitPercent = output.match(/Janky frames:\s*\d+\s*\(([\d.]+)\s*%\)/i)?.[1];
+  const jankPercent = explicitPercent
+    ? Number(explicitPercent)
+    : totalFrames > 0 ? (jankyFrames / totalFrames) * 100 : 0;
+  const frameTimesMs = parseFrameStats(output);
+  const slowFrames = frameTimesMs.filter((ms) => ms > 16.67).length
+    || Number(output.match(/Number Missed Vsync:\s*(\d+)/i)?.[1] ?? 0);
+  let fps: number | undefined;
+  if (frameTimesMs.length >= 2) {
+    const average = frameTimesMs.reduce((sum, ms) => sum + ms, 0) / frameTimesMs.length;
+    if (average > 0) fps = Math.max(1, Math.min(60, Math.round(1000 / average)));
+  } else {
+    const percentile = output.match(/50th percentile:\s*(\d+)\s*ms/i)?.[1];
+    if (percentile) {
+      const ms = Number(percentile);
+      if (ms > 0) fps = Math.max(1, Math.min(60, Math.round(1000 / ms)));
+    }
+  }
+  return {
+    totalFrames,
+    jankyFrames,
+    jankPercent: Number.isFinite(jankPercent) ? jankPercent : 0,
+    fps,
+    slowFrames,
+    frameTimesMs,
+  };
+}
+
+export function parseMemInfo(output: string): number | undefined {
+  const appSummary = output.match(/App Summary[\s\S]*?TOTAL:\s*([\d,]+)/i)?.[1];
+  if (appSummary) return Number(appSummary.replace(/,/g, '')) / 1024;
+  const totalPss = output.match(/TOTAL\s+PSS:\s*([\d,]+)/i)?.[1]
+    ?? output.match(/^\s*TOTAL\s+(\d+)/m)?.[1];
+  if (totalPss) return Number(totalPss.replace(/,/g, '')) / 1024;
+  return undefined;
+}
+
+export function buildPerformanceIssues(metrics: PerformanceMetrics): string[] {
+  const issues: string[] = [];
+  if (metrics.slowFrames > 0) {
+    issues.push(`${metrics.slowFrames} frame${metrics.slowFrames === 1 ? '' : 's'} > 16ms in last sample`);
+  }
+  if (metrics.jankPercent >= 5) {
+    issues.push(`Jank ${metrics.jankPercent.toFixed(1)}% of rendered frames`);
+  }
+  if (metrics.memoryMb != null && metrics.memoryMb >= 300) {
+    issues.push(`Memory ${metrics.memoryMb.toFixed(0)} MB is elevated`);
+  }
+  if (metrics.fps != null && metrics.fps < 45) {
+    issues.push(`FPS around ${metrics.fps} looks soft`);
+  }
+  return issues.slice(0, 4);
+}
+
 export type BuildVariant = {
   id: string;
   label: string;
