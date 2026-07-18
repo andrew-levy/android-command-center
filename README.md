@@ -38,8 +38,9 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Select discovered Gradle build variants, sync dependencies, run apps, or clean the project
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
-- See available and connected devices together, create AVD profiles, start or stop emulators, and switch device light/dark mode
-- Control a live device from the Devices section: rotate, font scale, emulator battery, developer overlays, and common runtime permissions
+- See available and connected devices together, create AVD profiles, and start or stop emulators
+- Open a per-device settings gear for theme, rotation, font scale, emulator battery, and developer overlays
+- Grant common runtime permissions from App data alongside force-stop and clear actions
 - Capture normal or annotated screenshots, record the screen, preview captures in the panel, and choose where to save them
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
