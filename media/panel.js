@@ -79,7 +79,19 @@ const row=(label,controls,labelClass='',sublabel='')=>'<div class="row"><span cl
 const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span class="select-wrap"><select id="'+id+'"'+(disabled?' disabled':'')+(label?' aria-label="'+esc(label)+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+options+'</select></span>';
 const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
 const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
-window.addEventListener('message',({data})=>{if(data.type==='state'){state=data.state;if(!testOpenSectionsApplied&&Array.isArray(state.testOpenSections)){openSections=new Set(state.testOpenSections);testOpenSectionsApplied=true}if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;render()}if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}});
+const ALL_SECTIONS=['build','device','deeplinks','inspector','performance','database','appdata','location','stream','toolchain'];
+window.addEventListener('message',({data})=>{
+ if(data.type==='state'){
+  state=data.state;
+  if(!testOpenSectionsApplied&&Array.isArray(state.testOpenSections)){openSections=new Set(state.testOpenSections);testOpenSectionsApplied=true}
+  if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];
+  if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;
+  render();
+ }
+ if(data.type==='expand-all'){openSections=new Set(ALL_SECTIONS);saveUi();render()}
+ if(data.type==='collapse-all'){openSections=new Set();saveUi();render()}
+ if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}
+});
 render();
 send('ready');
 

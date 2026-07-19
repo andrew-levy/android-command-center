@@ -127,6 +127,16 @@ test('Inspector hosts screen recording beside capture actions', () => {
   assert.match(extension, /RECORDING_SAVE_DIR_KEY/);
 });
 
+test('View title exposes expand-all and collapse-all controls', () => {
+  assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.expandAll'), true);
+  assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.collapseAll'), true);
+  assert.match(extension, /androidCli\.expandAll/);
+  assert.match(extension, /setSectionsExpanded\(true\)/);
+  assert.match(panel, /data\.type==='expand-all'/);
+  assert.match(panel, /data\.type==='collapse-all'/);
+  assert.match(panel, /const ALL_SECTIONS=/);
+});
+
 test('Performance section monitors gfxinfo vitals without becoming a profiler', () => {
   assert.match(panel, /function performanceSection\(/);
   assert.match(panel, /section\('performance','Performance'/);

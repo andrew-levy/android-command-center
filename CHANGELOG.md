@@ -11,6 +11,7 @@ All notable changes to Android Command Center are documented here.
 - Common runtime permission grants in App data alongside package actions.
 - Screen recording in Inspector with stop-and-save to a chosen destination.
 - Performance vitals monitor: FPS, jank, memory, slow frames, sparkline, reset, and raw dump.
+- Expand All / Collapse All icon actions in the Android Command Center view header.
 
 ## 0.1.8 - 2026-07-16
 

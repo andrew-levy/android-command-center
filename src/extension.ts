@@ -116,6 +116,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('androidCli.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('androidCli.openDashboard', () =>
       vscode.commands.executeCommand('workbench.view.extension.androidCli')),
+    vscode.commands.registerCommand('androidCli.expandAll', () => provider.setSectionsExpanded(true)),
+    vscode.commands.registerCommand('androidCli.collapseAll', () => provider.setSectionsExpanded(false)),
   );
 }
 
@@ -1316,6 +1318,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         issues: [],
       },
     });
+  }
+
+  setSectionsExpanded(expanded: boolean): void {
+    void this.view?.webview.postMessage({ type: expanded ? 'expand-all' : 'collapse-all' });
   }
 
   private render(): void { void this.view?.webview.postMessage({ type: 'state', state: this.state }); }

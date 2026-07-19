@@ -68,8 +68,32 @@
       {
         "command": "androidCli.openDashboard",
         "title": "Android Command Center: Open Dashboard"
+      },
+      {
+        "command": "androidCli.expandAll",
+        "title": "Android Command Center: Expand All",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "androidCli.collapseAll",
+        "title": "Android Command Center: Collapse All",
+        "icon": "$(collapse-all)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "androidCli.expandAll",
+          "when": "view == androidCli.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "androidCli.collapseAll",
+          "when": "view == androidCli.dashboard",
+          "group": "navigation@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "Android Command Center",
       "properties": {
