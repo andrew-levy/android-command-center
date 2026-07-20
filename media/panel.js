@@ -457,10 +457,10 @@ function appDataSection(deviceOptions,adbReady){
  const body=group(
   row('Device',selectWrap('app-device',deviceOptions,{disabled:state.appPackagesScanning,label:'App data device'}),'','Data target')
   +row('Package',selectWrap('app-package',packageOptions,{disabled:!packages.length&&!selected,label:'Installed package'}),'','Installed app ID')
-  +row('Permissions',permissionControls,'','Runtime access')
   +row('Force stop',actionButton('app-force-stop','Stop','secondary compact',disabled),'','End app process')
   +row('Clear cache',actionButton('app-clear-cache','Clear','secondary compact',disabled),'','Keep user data')
   +row('Clear storage',actionButton('app-clear-data','Clear','danger compact',disabled),'','Reset app data')
+  +row('Permissions',permissionControls,'','Runtime access')
  )+sectionFooter(state.appDataMessage,'app-packages',!adbReady,state.appPackagesScanning);
  return section('appdata','App data',status,body);
 }

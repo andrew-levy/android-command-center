@@ -45,6 +45,11 @@
   {id:'camera',label:'Camera',permission:'android.permission.CAMERA'},
   {id:'mic',label:'Mic',permission:'android.permission.RECORD_AUDIO'},
   {id:'notifications',label:'Alerts',permission:'android.permission.POST_NOTIFICATIONS'},
+  {id:'contacts',label:'Contacts',permission:'android.permission.READ_CONTACTS'},
+  {id:'calendar',label:'Calendar',permission:'android.permission.READ_CALENDAR'},
+  {id:'phone',label:'Phone',permission:'android.permission.READ_PHONE_STATE'},
+  {id:'nearby',label:'Nearby',permission:'android.permission.BLUETOOTH_CONNECT'},
+  {id:'activity',label:'Activity',permission:'android.permission.ACTIVITY_RECOGNITION'},
  ];
 
  function parseEmulatorProfiles(output){

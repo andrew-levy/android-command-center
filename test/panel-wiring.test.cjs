@@ -192,6 +192,7 @@ test('Devices section uses card gear menus and a new-device grid card', () => {
 
 test('App data hosts permission grants with package actions', () => {
   assert.match(panel, /row\('Permissions',permissionControls/);
+  assert.ok(panel.indexOf("row('Permissions',permissionControls") > panel.indexOf("row('Clear storage'"));
   assert.match(panel, /data-permission=/);
   assert.match(panel, /function appDataSection/);
   assert.match(panel, /filter\(\(\{status\}\)=>status\?\.requested&&status\?\.runtime\)/);
