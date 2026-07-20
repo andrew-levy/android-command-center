@@ -8,6 +8,7 @@ All notable changes to Android Command Center are documented here.
 
 - Added a preview-first screenshot workflow with clear saved/unsaved state and an explicit **Save as…** destination picker.
 - Remembered the last screenshot destination while retaining only the latest disposable preview.
+- Added a persisted multi-device Run picker for active devices and emulators, with a shortcut to **Devices** for starting inactive AVDs, then builds once and deploys to each target.
 
 ### Changed
 

@@ -18,7 +18,7 @@ A Cursor/VS Code activity-bar panel for everyday Android development without ope
 1. Install the extension and open an Android project in VS Code or Cursor. If you open a parent monorepo folder, set `androidCli.projectRoot` to the Android app directory that contains `gradlew`.
 2. Select the Android robot in the activity bar.
 3. Review the **Toolchain** section and prepare or select any missing tools.
-4. Choose a Gradle variant, select a connected device or emulator, and click **Run**.
+4. Choose a Gradle variant, select one or more active deployment targets, and click **Run**. Start inactive emulators from **Devices** first.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 ## Features
 
 - Detect the Android CLI, SDK, connected devices, and virtual devices
-- Build and run in one click, matching Android Studio's Run flow: build, install, and launch
+- Select one or more active devices or emulators, then build once and install/launch on each target
 - Select discovered Gradle build variants, sync dependencies, run apps, or clean the project
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
