@@ -9,6 +9,7 @@ import {
   COMMON_PERMISSIONS,
   buildPerformanceIssues,
   emulatorCreateSupported,
+  buildRunTargets,
   isCompleteDeepLink,
   isMissingExecutable,
   nearestFontScale,
@@ -19,12 +20,14 @@ import {
   parseMemInfo,
   parseSettingsFloat,
   parseSettingsInt,
+  reconcileRunTargetSelection,
   summarizeAdb,
   variantFromTask,
   type BuildVariant,
   type Device,
   type DeviceControls,
   type PerformanceMetrics,
+  type RunTarget,
 } from './core';
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +36,7 @@ const VARIANT_KEY = 'androidCli.selectedVariant.v1';
 const RECENT_LINKS_KEY = 'androidCli.recentDeepLinks.v1';
 const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
 const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
+const RUN_TARGETS_KEY = 'androidCli.selectedRunTargets.v1';
 const SCREENSHOT_SAVE_DIR_KEY = 'androidCli.screenshotSaveDirectory.v1';
 const RECORDING_SAVE_DIR_KEY = 'androidCli.recordingSaveDirectory.v1';
 const CONTROLS_SERIAL_KEY = 'androidCli.controlsSerial.v1';
@@ -44,9 +48,11 @@ const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
 const SUCCESS_HOLD_MS = 2_000;
 const SUCCESS_EXIT_MS = 180;
+const ERROR_HOLD_MS = 4_000;
+const ERROR_EXIT_MS = 180;
 
 type LinkResult = { ok: boolean; message: string };
-type Operation = { id: string; status: 'running' | 'success' | 'success-exit' | 'error'; message: string };
+type Operation = { id: string; status: 'running' | 'success' | 'success-exit' | 'error' | 'error-exit'; message: string };
 type DependencyStatus = 'checking' | 'ready' | 'missing' | 'error';
 type PerformanceState = {
   serial?: string;
@@ -61,6 +67,8 @@ type PerformanceState = {
   error?: string;
   updatedAt?: number;
 };
+type DeployFailure = { target: RunTarget; message: string };
+type DeployResult = { launched: RunTarget[]; failures: DeployFailure[]; total: number };
 type DashboardState = {
   cliAvailable: boolean;
   cliStatus: DependencyStatus;
@@ -81,6 +89,8 @@ type DashboardState = {
   selectedEmulatorProfile?: string;
   controlsSerial?: string;
   deviceControls?: DeviceControls;
+  runTargets: RunTarget[];
+  selectedRunTargets: string[];
   variants: BuildVariant[];
   selectedVariant?: string;
   deepLinkPrefixes: string[];
@@ -97,6 +107,7 @@ type DashboardState = {
   appPackagesScanning?: boolean;
   busy?: string;
   error?: string;
+  errorExiting?: boolean;
   screenshot?: string;
   screenshotSaved?: boolean;
   recording?: { serial: string; active: boolean };
@@ -130,6 +141,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private pollingDevices = false;
   private autoScannedSerial?: string;
   private operationSequence = 0;
+  private errorSequence = 0;
   private readonly databases: DatabaseInspector;
   private screenshotFile?: vscode.Uri;
   private screenRecordProcess?: ChildProcess;
@@ -139,6 +151,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
+    const storedRunTargets = context.workspaceState.get<string[]>(RUN_TARGETS_KEY);
     this.databases = new DatabaseInspector(adb, sqlite, () => this.privateStorageUri().fsPath);
     this.state = {
       cliAvailable: cached?.cliAvailable ?? false,
@@ -156,6 +169,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       emulatorCreateSupported: emulatorCreateSupported(),
       selectedEmulatorProfile: cached?.selectedEmulatorProfile ?? 'medium_phone',
       controlsSerial: context.workspaceState.get<string>(CONTROLS_SERIAL_KEY) ?? cached?.controlsSerial,
+      runTargets: buildRunTargets(cached?.devices ?? [], cached?.emulators ?? []),
+      selectedRunTargets: storedRunTargets ?? [],
       variants: cached?.variants ?? [],
       selectedVariant: context.workspaceState.get<string>(VARIANT_KEY) ?? cached?.selectedVariant,
       deepLinkPrefixes: cached?.deepLinkPrefixes ?? [],
@@ -208,6 +223,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       if (JSON.stringify(devices) === JSON.stringify(this.state.devices)) return;
       this.state.devices = devices;
       this.syncControlsSerial();
+      await this.updateRunTargets();
       this.persistCache();
       this.render();
       void this.autoScanSections(false);
@@ -221,7 +237,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   async refresh(discoverProject = false): Promise<void> {
     const initialLoad = Boolean(this.state.initializing);
     this.state.busy = initialLoad ? undefined : 'Refreshing…';
-    this.state.error = undefined;
+    this.clearError(false);
     this.state.cliStatus = 'checking';
     this.state.adbStatus = 'checking';
     this.state.sqliteStatus = 'checking';
@@ -280,6 +296,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (this.state.controlsSerial && this.state.adbStatus === 'ready') {
       await this.refreshDeviceControls(this.state.controlsSerial).catch(() => undefined);
     }
+    await this.updateRunTargets();
     if (!initialLoad && variantDiscovery) await variantDiscovery;
     if (root) {
       try { await this.refreshDeepLinks(root); }
@@ -329,8 +346,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'dependency-choose-adb': await this.chooseExecutable('adbExecutable', 'Choose the adb executable'); return;
         case 'dependency-choose-sqlite': await this.chooseExecutable('sqliteExecutable', 'Choose the sqlite3 executable'); return;
         case 'dependency-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'Android Command Center'); return;
-        case 'error-dismiss': this.state.error = undefined; this.render(); return;
+        case 'error-dismiss': this.clearError(); return;
         case 'variant': await this.selectVariant(String(message.id)); return;
+        case 'run-targets': await this.selectRunTargets(Array.isArray(message.ids) ? message.ids.map(String) : []); return;
         case 'gradle-sync': await this.gradleSync(); return;
         case 'build-run': await this.buildAndRun(); return;
         case 'clean': await this.clean(); return;
@@ -367,7 +385,11 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'layout': await this.layout(); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
-        case 'logcat': return void this.terminal('Logcat', [adb(), ...(message.serial ? ['-s', String(message.serial)] : []), 'logcat']);
+        case 'logcat': {
+          const serial = String(message.serial ?? '').trim();
+          if (!serial) throw new Error('Connect or start an Android device first.');
+          return void this.terminal('Logcat', [adb(), '-s', serial, 'logcat']);
+        }
         case 'db-refresh': await this.dbRefresh(String(message.serial ?? '')); return;
         case 'db-open': await this.dbOpen(); return;
         case 'db-package': await this.dbSelectPackage(String(message.packageName ?? '')); return;
@@ -389,12 +411,12 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       }
     } catch (error) {
       if (error instanceof UserCancelledError) {
-        this.state.error = undefined;
+        this.clearError(false);
         this.state.busy = undefined;
         this.render();
         return;
       }
-      this.state.error = messageOf(error);
+      this.showError(messageOf(error));
       this.state.busy = undefined;
       this.render();
     }
@@ -424,6 +446,21 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.render();
   }
 
+  private async selectRunTargets(ids: string[]): Promise<void> {
+    this.state.selectedRunTargets = reconcileRunTargetSelection(this.state.runTargets, ids);
+    await this.context.workspaceState.update(RUN_TARGETS_KEY, this.state.selectedRunTargets);
+    this.persistCache();
+    this.render();
+  }
+
+  private async updateRunTargets(): Promise<void> {
+    this.state.runTargets = buildRunTargets(this.state.devices, this.state.emulators);
+    const selected = reconcileRunTargetSelection(this.state.runTargets, this.state.selectedRunTargets);
+    if (sameStrings(selected, this.state.selectedRunTargets)) return;
+    this.state.selectedRunTargets = selected;
+    await this.context.workspaceState.update(RUN_TARGETS_KEY, selected);
+  }
+
   private async gradleSync(): Promise<void> {
     const root = requireRoot();
     await this.busy('Syncing Gradle project…', async () => {
@@ -441,15 +478,22 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
 
   private async buildAndRun(): Promise<void> {
     const root = requireRoot();
-    await this.busy('Building and running…', async () => {
+    const selected = new Set(this.state.selectedRunTargets);
+    const targets = this.state.runTargets.filter((target) => target.status === 'online' && target.selectable && selected.has(target.id));
+    if (!targets.length) throw new Error('Choose at least one deployment target before running the app.');
+    await this.busy('Building…', async () => {
       const variant = this.selectedVariant();
       if (!await this.runGradleTask(root, variant.task, 'Build & Run')) throw new Error('Android build failed. Check the Build & Run terminal for details.');
       await this.refreshDeepLinks(root);
-      await this.deploy(variant);
-    }, 'build-run', 'App launched');
+      const result = await this.deploy(variant, targets);
+      if (result.failures.length) this.showError(deployResultMessage(result));
+      return result;
+    }, 'build-run', (result) => result.failures.length
+      ? `Launched on ${result.launched.length} of ${result.total}`
+      : `Launched on ${result.launched.length} ${result.launched.length === 1 ? 'target' : 'targets'}`);
   }
 
-  private async deploy(variant: BuildVariant): Promise<void> {
+  private async deploy(variant: BuildVariant, targets: RunTarget[]): Promise<DeployResult> {
     const files = await findVariantApks(variant);
     if (!files.length) throw new Error(`No APK found for ${variant.label}. Build the variant first.`);
     const picked = files.length === 1 ? files[0] : await vscode.window.showQuickPick(
@@ -457,9 +501,29 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       { placeHolder: `Choose a ${variant.label} APK to deploy` },
     ).then((x) => x?.uri);
     if (!picked) throw new UserCancelledError();
-    const device = await this.chooseDevice();
-    const args = ['run', `--apks=${picked.fsPath}`, ...(device ? [`--device=${device}`] : [])];
-    if (!await this.runProcessTask('Android Run', cli(), args)) throw new Error('Android run failed. Check the Android Run terminal for details.');
+    const failures: DeployFailure[] = [];
+    await this.refreshConnectedDevices().catch(() => undefined);
+    const ready = targets.flatMap((target) => {
+      const current = this.state.runTargets.find((candidate) => candidate.id === target.id);
+      if (current?.status === 'online' && current.serial) return [current];
+      failures.push({ target, message: 'Target went offline after the build.' });
+      return [];
+    });
+    const launched: RunTarget[] = [];
+    if (ready.length) this.setBusyLabel('build-run', 'Launching…');
+    for (let index = 0; index < ready.length; index += 1) {
+      const target = ready[index];
+      const args = ['run', `--apks=${picked.fsPath}`, `--device=${target.serial}`];
+      const name = `Android Run · ${target.label}`;
+      if (await this.runProcessTask(name, cli(), args, undefined, `android-run:${target.id}`)) {
+        launched.push(target);
+      } else {
+        failures.push({ target, message: `Launch failed. Check the ${name} terminal.` });
+      }
+    }
+    const result = { launched, failures, total: targets.length };
+    if (!launched.length) throw new Error(deployResultMessage(result));
+    return result;
   }
 
   private async openDeepLink(uri: string, serial: string): Promise<void> {
@@ -1070,6 +1134,12 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     await this.refresh(true);
   }
 
+  private async refreshConnectedDevices(): Promise<void> {
+    this.state.devices = await enrichDevices(parseDevices(await run(adb(), ['devices', '-l'], undefined, REFRESH_CHECK_TIMEOUT_MS)));
+    await this.updateRunTargets();
+    this.persistCache();
+  }
+
   private async runGradleTask(root: vscode.Uri, gradleTask: string, name = 'Build & Run'): Promise<boolean> {
     return this.runGradle(root, [gradleTask], name, gradleTask);
   }
@@ -1101,17 +1171,17 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       { placeHolder: 'Choose a target device' }).then((item) => item?.serial);
   }
 
-  private async busy<T>(label: string, action: () => Promise<T>, id = 'busy', success = 'Done'): Promise<T> {
+  private async busy<T>(label: string, action: () => Promise<T>, id = 'busy', success: string | ((result: T) => string) = 'Done'): Promise<T> {
     const startedAt = Date.now();
     const sequence = ++this.operationSequence;
     this.state.busy = label;
     this.state.operation = { id, status: 'running', message: label };
-    this.state.error = undefined;
+    this.clearError(false);
     this.render();
     try {
       const result = await action();
       await this.waitForMinimumBusyTime(startedAt);
-      if (sequence === this.operationSequence) this.showOperationSuccess(id, success);
+      if (sequence === this.operationSequence) this.showOperationSuccess(id, typeof success === 'function' ? success(result) : success);
       return result;
     } catch (error) {
       if (error instanceof UserCancelledError) {
@@ -1120,7 +1190,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       }
       await this.waitForMinimumBusyTime(startedAt);
       if (sequence === this.operationSequence) {
-        this.state.operation = { id, status: 'error', message: messageOf(error) };
+        this.showOperationError(id, messageOf(error));
       }
       throw error;
     } finally {
@@ -1129,6 +1199,14 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         this.render();
       }
     }
+  }
+
+  private setBusyLabel(id: string, label: string): void {
+    this.state.busy = label;
+    if (this.state.operation?.id === id && this.state.operation.status === 'running') {
+      this.state.operation = { ...this.state.operation, message: label };
+    }
+    this.render();
   }
 
   private async waitForMinimumBusyTime(startedAt: number): Promise<void> {
@@ -1150,6 +1228,47 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         this.render();
       }, SUCCESS_EXIT_MS);
     }, SUCCESS_ENTER_MS + SUCCESS_HOLD_MS);
+  }
+
+  private showOperationError(id: string, message: string): void {
+    const failure: Operation = { id, status: 'error', message };
+    this.state.operation = failure;
+    setTimeout(() => {
+      if (this.state.operation !== failure) return;
+      const exiting: Operation = { ...failure, status: 'error-exit' };
+      this.state.operation = exiting;
+      this.render();
+      setTimeout(() => {
+        if (this.state.operation !== exiting) return;
+        this.state.operation = undefined;
+        this.render();
+      }, ERROR_EXIT_MS);
+    }, SUCCESS_ENTER_MS + SUCCESS_HOLD_MS);
+  }
+
+  private showError(message: string): void {
+    const sequence = ++this.errorSequence;
+    this.state.error = message;
+    this.state.errorExiting = false;
+    this.render();
+    setTimeout(() => {
+      if (sequence !== this.errorSequence || this.state.error !== message) return;
+      this.state.errorExiting = true;
+      this.render();
+      setTimeout(() => {
+        if (sequence !== this.errorSequence || this.state.error !== message) return;
+        this.state.error = undefined;
+        this.state.errorExiting = undefined;
+        this.render();
+      }, ERROR_EXIT_MS);
+    }, ERROR_HOLD_MS);
+  }
+
+  private clearError(render = true): void {
+    this.errorSequence += 1;
+    this.state.error = undefined;
+    this.state.errorExiting = undefined;
+    if (render) this.render();
   }
 
   private privateStorageUri(): vscode.Uri {
@@ -1293,6 +1412,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     const {
       busy: _busy,
       error: _error,
+      errorExiting: _errorExiting,
       screenshot: _screenshot,
       screenshotSaved: _screenshotSaved,
       recording: _recording,
@@ -1306,6 +1426,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       databaseScanning: _databaseScanning,
       appPackagesScanning: _appPackagesScanning,
       testOpenSections: _testOpenSections,
+      runTargets: _runTargets,
+      selectedRunTargets: _selectedRunTargets,
       ...cache
     } = this.state;
     void this.context.workspaceState.update(CACHE_KEY, {
@@ -1488,15 +1610,25 @@ function staticPath(value: string): string {
 function normalize(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]/g, ''); }
 function unique<T>(values: T[]): T[] { return [...new Set(values)]; }
 function isString(value: string | undefined): value is string { return Boolean(value); }
+function sameStrings(a: string[], b: string[]): boolean { return a.length === b.length && a.every((value, index) => value === b[index]); }
+
+function deployResultMessage(result: DeployResult): string {
+  const failures = result.failures.map(({ target, message }) => `${target.label}: ${message}`).join(' ');
+  if (result.launched.length) return `Launched on ${result.launched.length} of ${result.total} targets. ${failures}`;
+  return `Could not launch on any selected target. ${failures}`;
+}
 
 async function enrichDevices(devices: Device[]): Promise<Device[]> {
   return Promise.all(devices.map(async (device) => {
-    if (device.state !== 'device') return device;
+    const emulator = device.serial.startsWith('emulator-');
+    if (device.state !== 'device' && !emulator) return device;
     const [avdResult, themeResult] = await Promise.allSettled([
-      device.serial.startsWith('emulator-')
+      emulator
         ? run(adb(), ['-s', device.serial, 'emu', 'avd', 'name'], undefined, 5_000)
         : Promise.resolve(''),
-      run(adb(), ['-s', device.serial, 'shell', 'cmd', 'uimode', 'night'], undefined, 5_000),
+      device.state === 'device'
+        ? run(adb(), ['-s', device.serial, 'shell', 'cmd', 'uimode', 'night'], undefined, 5_000)
+        : Promise.resolve(''),
     ]);
     const avdName = avdResult.status === 'fulfilled'
       ? avdResult.value.split(/\r?\n/).map((line) => line.trim()).find((line) => line && line !== 'OK')
@@ -1504,12 +1636,13 @@ async function enrichDevices(devices: Device[]): Promise<Device[]> {
     const themeOutput = themeResult.status === 'fulfilled' ? themeResult.value.toLowerCase() : '';
     const theme = /\b(yes|enabled)\b/.test(themeOutput) ? 'dark'
       : /\b(no|disabled)\b/.test(themeOutput) ? 'light' : 'auto';
-    return {
+    const enriched: Device = {
       ...device,
       avdName,
-      theme,
       description: avdName ? `${avdName.replaceAll('_', ' ')} · ${device.serial}` : device.description,
     };
+    if (device.state === 'device') enriched.theme = theme;
+    return enriched;
   }));
 }
 async function listInstalledPackages(serial: string): Promise<string[]> {

@@ -5,6 +5,7 @@ const {
  canCreateEmulator,
  canPlayRoute,
  canUseDeviceControls,
+ matchAvdDevices,
  parseCoords,
  restoreOpenSections,
  FONT_SCALE_PRESETS,
@@ -58,6 +59,8 @@ let openSections=new Set(restoreOpenSections(savedUi,uiVersion));
 let testOpenSectionsApplied=false;
 let deepLinkDraft=savedUi.deepLinkDraft||'';
 let sqlDraft=savedUi.sqlDraft||'';
+let runTargetMenuOpen=Boolean(savedUi.runTargetMenuOpen);
+let streamSerial = savedUi.streamSerial || '';
 let locationState={view:savedUi.locationView==='route'?'route':'point',trail:0,mode:'walk',multiplier:1,status:'idle',arc:0,elapsed:0,angle:0,last:0,lastPush:0,serial:'',error:'',coords:'',selection:null,map:{zoom:1,lat:0,lng:0}};
 const trails=[
  {name:'Apple Park Loop',description:'A gentle loop around Apple Park',mode:'walk',loop:true,waypoints:[[37.33272,-122.00833,49],[37.33373,-122.00663,49],[37.33540,-122.00633,49],[37.33675,-122.00759,45],[37.33698,-122.00969,48],[37.33598,-122.01138,49],[37.33431,-122.01169,50],[37.33296,-122.01042,51]]},
@@ -70,15 +73,16 @@ let mapPointer=null;
 let mapDirty=true;
 const send=(type,extra={})=>vscode.postMessage({type,...extra});
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const saveUi=()=>vscode.setState?.({uiVersion,deepLinkDraft,sqlDraft,locationView:locationState.view,openSections:[...openSections]});
+const saveUi=()=>vscode.setState?.({uiVersion,deepLinkDraft,sqlDraft,locationView:locationState.view,runTargetMenuOpen,streamSerial,openSections:[...openSections]});
 const captureScrollState=()=>({page:{left:document.scrollingElement?.scrollLeft||0,top:document.scrollingElement?.scrollTop||0},regions:new Map([...app.querySelectorAll('[data-preserve-scroll]')].map((el)=>[el.dataset.preserveScroll,{left:el.scrollLeft,top:el.scrollTop}]))});
 const restoreScrollState=(snapshot)=>{for(const el of app.querySelectorAll('[data-preserve-scroll]')){const position=snapshot.regions.get(el.dataset.preserveScroll);if(position){el.scrollLeft=position.left;el.scrollTop=position.top}}if(document.scrollingElement){document.scrollingElement.scrollLeft=snapshot.page.left;document.scrollingElement.scrollTop=snapshot.page.top}};
 const section=(id,title,status,body)=>'<details class="tool-section" data-section="'+id+'"'+(openSections.has(id)?' open':'')+'><summary><span class="section-title">'+icon(sectionIcons[id])+'<span>'+esc(title)+'</span></span><span class="section-status">'+status+'</span>'+chevron+'</summary><div class="section-body">'+body+'</div></details>';
 const group=(rows)=>'<div class="settings-group">'+rows+'</div>';
 const row=(label,controls,labelClass='',sublabel='')=>'<div class="row"><span class="row-copy"><span class="row-label'+(labelClass?' '+labelClass:'')+'">'+esc(label)+'</span>'+(sublabel?'<span class="row-sublabel">'+esc(sublabel)+'</span>':'')+'</span><span class="row-controls">'+controls+'</span></div>';
 const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span class="select-wrap"><select id="'+id+'"'+(disabled?' disabled':'')+(label?' aria-label="'+esc(label)+'"':'')+(title?' title="'+esc(title)+'"':'')+'>'+options+'</select></span>';
-const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
+const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':status==='error-exit'?'<span class="action-result error exiting">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
 const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
+const sectionFooter=(message,id,disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null),running=op?.status==='running';return '<div class="section-footer"><span class="section-footer-message">'+esc(message||'')+'</span><button class="section-refresh action-button" data-action="'+id+'" type="button" title="'+esc(op?.message||'Refresh')+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>Refresh</span></button></div>'};
 const ALL_SECTIONS=['build','device','deeplinks','inspector','performance','database','appdata','location','stream','toolchain'];
 window.addEventListener('message',({data})=>{
  if(data.type==='state'){
@@ -94,10 +98,13 @@ window.addEventListener('message',({data})=>{
 });
 render();
 send('ready');
+document.addEventListener('pointerdown',(event)=>{if(runTargetMenuOpen&&event.target instanceof Element&&!event.target.closest('.run-target-picker'))setRunTargetMenuOpen(false)});
+document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&runTargetMenuOpen){setRunTargetMenuOpen(false);document.getElementById('run-target-trigger')?.focus()}});
 
 function render(){
  const scrollState=captureScrollState();
  const devices=state.devices||[],online=devices.filter((d)=>d.state==='device'),locationDevices=online.filter((d)=>d.serial.startsWith('emulator-')),avds=state.emulators||[];
+ if(online.length&&!online.some((d)=>d.serial===streamSerial))streamSerial=online[0].serial;
  if(!locationDevices.some((d)=>d.serial===locationState.serial))locationState.serial=locationDevices[0]?.serial||'';
  if(locationState.status==='playing'&&state.adbStatus!=='checking'&&!canPlayRoute(state.adbStatus==='ready',locationState.serial)){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}
  const optionsFor=(serial)=>online.length?online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===(serial||online[0]?.serial)?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">No device online</option>';
@@ -107,16 +114,16 @@ function render(){
  const cliReady=state.cliStatus==='ready',adbReady=state.adbStatus==='ready',sqliteReady=state.sqliteStatus==='ready';
  if(!online.some((d)=>d.serial===controlsSerial))controlsSerial=state.controlsSerial||online[0]?.serial||'';
  if(openDeviceMenu&&!online.some((d)=>d.serial===openDeviceMenu))openDeviceMenu='';
- const build=buildSection(variants,selected,cliReady);
+ const build=buildSection(variants,selected,cliReady,adbReady);
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceSection(devices,avds,cliReady,adbReady));
  const inspector=inspectorSection(cliReady,adbReady,online);
  const performance=performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady);
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
- const stream=section('stream','Stream','Logcat',group(row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady),'','Live Logcat output')));
+ const stream=section('stream','Stream','Logcat',group(row('Device',selectWrap('stream-device',optionsFor(streamSerial),{disabled:!online.length,label:'Logcat device'}),'','Log source')+row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady||!online.length),'','Live Logcat output')));
  const loadingToast=state.initializing?'<div class="loading-toast" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading tools, devices, and app data…</span></div>':'';
- const errorToast=state.error?'<div class="error-toast" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
+ const errorToast=state.error?'<div class="error-toast'+(state.errorExiting?' exiting':'')+'" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
  app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+performance+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
  bind();
  restoreScrollState(scrollState);
@@ -151,12 +158,15 @@ function dependencyRow(name,status,version,message){
  return '<div class="dependency-row '+esc(status)+'"><span class="status-dot'+dot+'" aria-hidden="true"></span><span class="dependency-copy"><strong>'+esc(name)+'</strong><span title="'+esc(detail)+'">'+esc(detail)+'</span></span><span class="dependency-state">'+esc(label)+'</span></div>';
 }
 
-function buildSection(variants,selected,cliReady){
+function buildSection(variants,selected,cliReady,adbReady){
  const active=variants.find((variant)=>variant.id===selected),label=active?.label||'Default target';
- const availability=buildAvailability(cliReady);
+ const selectedIds=new Set(state.selectedRunTargets||[]),selectedTargets=(state.runTargets||[]).filter((target)=>target.status==='online'&&selectedIds.has(target.id));
+ const availability=buildAvailability(cliReady,adbReady,selectedTargets.length);
  const options=variants.map((variant)=>'<option value="'+esc(variant.id)+'"'+(variant.id===selected?' selected':'')+'>'+esc(variant.label)+'</option>').join('');
+ const running=state.operation?.id==='build-run'&&state.operation.status==='running';
  const body=group(
   row('Variant',selectWrap('build-variant',options,{label:'Build variant',title:label}),'','Gradle target')
+  +row('Run on',runTargetPicker(state.runTargets||[],selectedIds,running),'','Deployment targets')
   +row('Run app',actionButton('build-run','Run','primary compact',!availability.run),'','Build + launch')
   +row('Clean',actionButton('clean','Clean','secondary compact',!availability.clean),'','Remove outputs')
   +row('Gradle Sync',actionButton('gradle-sync','Sync','secondary compact',!availability.sync),'','Refresh dependencies')
@@ -164,14 +174,29 @@ function buildSection(variants,selected,cliReady){
  return section('build','Build',esc(label),body);
 }
 
+function runTargetPicker(targets,selectedIds,busy){
+ const active=targets.filter((target)=>target.status==='online'),selected=active.filter((target)=>selectedIds.has(target.id));
+ const summary=selected.length?selected.length+' '+(selected.length===1?'target':'targets'):'No active targets';
+ const names=selected.map((target)=>target.label).join(', ')||'Choose deployment targets';
+ const options=active.length?runTargetGroup('Active',active,selectedIds,busy):'<div class="run-target-empty">No active devices</div>';
+ const note='<div class="run-target-note"><span>Only active devices can be selected.</span><button id="open-devices-from-targets" class="run-target-devices-link" type="button">Devices</button></div>';
+ const pickerChevron='<svg class="picker-chevron" viewBox="0 0 12 12" fill="none"><path d="m2.5 4.5 3.5 3 3.5-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+ return '<div class="run-target-picker"><button id="run-target-trigger" class="run-target-trigger" type="button" aria-expanded="'+runTargetMenuOpen+'" aria-controls="run-target-menu" aria-haspopup="true" title="'+esc(names)+'">'+icon('phone')+'<span>'+esc(summary)+'</span>'+pickerChevron+'</button><div id="run-target-menu" class="run-target-menu" role="group" aria-label="Deployment targets" data-preserve-scroll="run-target-menu"'+(runTargetMenuOpen?'':' hidden')+'>'+options+note+'</div></div>';
+}
+
+function runTargetGroup(title,targets,selectedIds,busy){
+ return '<div class="run-target-group" role="group" aria-label="'+esc(title)+'"><div class="run-target-group-title">'+esc(title)+'</div>'+targets.map((target)=>{const checked=selectedIds.has(target.id),disabled=busy||!target.selectable,status=target.serial||'Online';return '<label class="run-target-option'+(disabled?' disabled':'')+'"><input class="run-target-checkbox" type="checkbox" data-target-id="'+esc(target.id)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span class="status-dot on" aria-hidden="true"></span><span class="run-target-copy"><strong>'+esc(target.label)+'</strong><span>'+esc(status)+'</span></span></label>'}).join('')+'</div>';
+}
+
 function deviceSection(devices,avds,cliReady,adbReady){
  return '<div class="device-section">'+deviceGrid(devices,avds,adbReady)+emulatorCreateRow(cliReady)+'</div>';
 }
 
 function deviceGrid(devices,avds,adbReady){
- const used=new Set();
- const avdCards=avds.map((name)=>{const running=devices.find((d)=>d.avdName===name);if(running)used.add(running.serial);return deviceCard({name,device:running,virtual:true,adbReady})});
- const connectedCards=devices.filter((d)=>!used.has(d.serial)).map((device)=>deviceCard({name:device.description,device,virtual:device.serial.startsWith('emulator-'),adbReady}));
+ const operation=state.operation,startingAvdName=operation?.status==='running'&&operation.id?.startsWith('device:')?operation.id.slice(7):'';
+ const {avdMatches,connected}=matchAvdDevices(devices,avds,startingAvdName);
+ const avdCards=avdMatches.map(({name,device})=>deviceCard({name,device,virtual:true,adbReady}));
+ const connectedCards=connected.map((device)=>deviceCard({name:device.description,device,virtual:device.serial.startsWith('emulator-'),adbReady}));
  const cards=[...avdCards,...connectedCards];
  return '<div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card dotted"><strong>No devices yet</strong><span>Create an emulator profile to get started.</span></div>')+'</div>';
 }
@@ -341,27 +366,26 @@ function databaseSection(deviceOptions,adbReady,sqliteReady){
   :'<option value="">Scan debuggable apps</option>';
  const dbOptions=(db.databases||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedDatabase?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No databases</option>';
  const tableOptions=(db.tables||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedTable?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No user tables</option>';
+ const footerMessage=db.result?(db.message||db.result.message||(db.result.rows?.length+' row(s)')):(db.message||'');
  const result=db.result
-  ?databaseResult(db.result,db.selectedTable,db.message)
-  :db.message?'<div class="db-message">'+esc(db.message)+'</div>'
+  ?databaseResult(db.result,db.selectedTable)
   :'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
  const controls=group(
    row('Device',selectWrap('db-device',deviceOptions,{disabled:state.databaseScanning,label:'Database device'}),'','Query target')
-   +row('Refresh',actionButton('db-refresh','Refresh','secondary compact',!adbReady||!sqliteReady,state.databaseScanning),'','Apps, databases, and tables')
    +row('App',selectWrap('db-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}),'','Debuggable process')
    +row('Database',selectWrap('db-database',dbOptions,{disabled:!(db.databases?.length),label:'Database'}),'','On-device SQLite')
    +row('Table',selectWrap('db-table',tableOptions,{disabled:!(db.tables?.length),label:'Database table'}),'','Table to inspect')
   )
   +'<textarea id="db-sql" rows="4" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea>'
   +'<div class="action-strip">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+actionButton('db-push','Push','secondary',!db.dirty)+'</div>'
-  +(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result;
+  +(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result
+  +sectionFooter(footerMessage,'db-refresh',!adbReady||!sqliteReady,state.databaseScanning);
  return section('database','Database',esc(status),controls);
 }
 
-function databaseResult(result,table,message){
+function databaseResult(result,table){
  const columns=result.columns||[],rows=result.rows||[];
- const resultMessage=message||result.message||(rows.length+' row(s)');
- if(!columns.length&&!rows.length)return '<div class="db-message">'+esc(resultMessage||'No rows')+'</div>';
+ if(!columns.length&&!rows.length)return '';
  const head='<tr>'+columns.map((column)=>'<th>'+esc(column==='__rowid__'?'rowid':column)+'</th>').join('')+'</tr>';
  const body=rows.map((row)=>{
   const rowid=columns.includes('__rowid__')?row[columns.indexOf('__rowid__')]:'';
@@ -372,7 +396,7 @@ function databaseResult(result,table,message){
    return '<td class="'+(cell===null?'db-null':'')+(editable?' db-editable':'')+'"'+(editable?' data-db-cell data-rowid="'+esc(rowid)+'" data-column="'+esc(column)+'" data-table="'+esc(table)+'" title="Click to edit"':'')+'>'+esc(display)+'</td>';
   }).join('')+'</tr>';
  }).join('');
- return '<div class="db-result"><div class="db-result-meta">'+esc(resultMessage)+'</div><div class="db-table-wrap" data-preserve-scroll="database-result"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+ return '<div class="db-result"><div class="db-table-wrap" data-preserve-scroll="database-result"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
 }
 
 function appDataSection(deviceOptions,adbReady){
@@ -387,12 +411,11 @@ function appDataSection(deviceOptions,adbReady){
  const body=group(
   row('Device',selectWrap('app-device',deviceOptions,{disabled:state.appPackagesScanning,label:'App data device'}),'','Data target')
   +row('Package',selectWrap('app-package',packageOptions,{disabled:!packages.length&&!selected,label:'Installed package'}),'','Installed app ID')
-  +row('Refresh',actionButton('app-packages','Refresh','secondary compact',!adbReady,state.appPackagesScanning),'','Installed package list')
   +row('Allow',permissionControls,'','Grant common runtime permissions')
   +row('Force stop',actionButton('app-force-stop','Stop','secondary compact',disabled),'','End app process')
   +row('Clear cache',actionButton('app-clear-cache','Clear','secondary compact',disabled),'','Keep user data')
   +row('Clear storage',actionButton('app-clear-data','Clear','danger compact',disabled),'','Reset app data')
- )+(state.appDataMessage?'<div class="app-data-message">'+esc(state.appDataMessage)+'</div>':'');
+ )+sectionFooter(state.appDataMessage,'app-packages',!adbReady,state.appPackagesScanning);
  return section('appdata','App data',status,body);
 }
 
@@ -436,12 +459,18 @@ function locationSection(deviceOptions,adbReady){
  return section('location','Location',status,target+switcher+panel+'<div class="location-error" id="location-error">'+esc(locationState.error)+'</div>');
 }
 
+function setRunTargetMenuOpen(open){runTargetMenuOpen=Boolean(open);const trigger=document.getElementById('run-target-trigger'),menu=document.getElementById('run-target-menu');if(trigger)trigger.setAttribute('aria-expanded',String(runTargetMenuOpen));if(menu)menu.hidden=!runTargetMenuOpen;saveUi()}
+
 function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||openDeviceMenu||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||openDeviceMenu||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
+ document.getElementById('stream-device')?.addEventListener('change',(e)=>{streamSerial = e.target.value; saveUi()});
+ document.getElementById('run-target-trigger')?.addEventListener('click',()=>setRunTargetMenuOpen(!runTargetMenuOpen));
+ document.getElementById('open-devices-from-targets')?.addEventListener('click',()=>{runTargetMenuOpen=false;openSections.add('device');saveUi();render();requestAnimationFrame(()=>document.querySelector('details[data-section="device"]')?.scrollIntoView({behavior:'smooth',block:'start'}))});
+ app.querySelectorAll('.run-target-checkbox').forEach((el)=>el.addEventListener('change',()=>{state.selectedRunTargets=[...app.querySelectorAll('.run-target-checkbox:checked')].map((input)=>input.dataset.targetId);send('run-targets',{ids:state.selectedRunTargets});render()}));
  document.getElementById('emulator-profile')?.addEventListener('change',(e)=>send('emulator-profile',{profile:e.target.value}));
  document.getElementById('perf-device')?.addEventListener('change',(e)=>send('performance-serial',{serial:e.target.value}));
  document.getElementById('perf-package')?.addEventListener('change',(e)=>send('performance-package',{packageName:e.target.value}));

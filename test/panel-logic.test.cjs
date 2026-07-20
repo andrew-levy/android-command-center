@@ -6,6 +6,7 @@ const {
   canCreateEmulator,
   canPlayRoute,
   canUseDeviceControls,
+  matchAvdDevices,
   parseCoords,
   parseEmulatorProfiles,
   restoreOpenSections,
@@ -26,7 +27,10 @@ test('saved sections migrate old ids and reset obsolete defaults', () => {
 });
 
 test('Gradle-only actions remain available without Android CLI', () => {
-  assert.deepEqual(buildAvailability(false), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(false, true, 1), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, false, 1), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, true, 0), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, true, 2), {run: true, clean: true, sync: true});
 });
 
 test('route playback requires ADB and an emulator serial', () => {
@@ -43,4 +47,30 @@ test('emulator create and device controls gate on the right dependencies', () =>
   assert.equal(canUseDeviceControls(true, 'emulator-5554'), true);
   assert.equal(canUseDeviceControls(false, 'emulator-5554'), false);
   assert.deepEqual(parseEmulatorProfiles('medium_phone\nlarge_desktop\n'), ['medium_phone', 'large_desktop']);
+});
+
+test('a lone unidentified emulator is reconciled with the AVD currently starting', () => {
+  const booting = {serial: 'emulator-5554', state: 'offline', description: 'emulator-5554'};
+  const result = matchAvdDevices(
+    [booting],
+    ['Pixel_9_Pro_API_31', 'Pixel_4_API_31'],
+    'Pixel_4_API_31',
+  );
+
+  assert.deepEqual(result.avdMatches, [
+    {name: 'Pixel_9_Pro_API_31', device: undefined},
+    {name: 'Pixel_4_API_31', device: booting},
+  ]);
+  assert.deepEqual(result.connected, []);
+});
+
+test('ambiguous unidentified emulators remain separate instead of being guessed', () => {
+  const devices = [
+    {serial: 'emulator-5554', state: 'offline'},
+    {serial: 'emulator-5556', state: 'offline'},
+  ];
+  const result = matchAvdDevices(devices, ['Pixel_4_API_31'], 'Pixel_4_API_31');
+
+  assert.equal(result.avdMatches[0].device, undefined);
+  assert.deepEqual(result.connected, devices);
 });
