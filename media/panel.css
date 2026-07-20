@@ -868,6 +868,11 @@ details.toolchain > .section-body {
 }
 
 /* ---------- Devices ---------- */
+.device-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .device-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -884,14 +889,177 @@ details.toolchain > .section-body {
   display: flex;
   flex-direction: column;
 }
+.empty-card {
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+}
+.empty-card strong {
+  font-size: 11px;
+}
+.empty-card span {
+  color: var(--muted);
+  font-size: 10px;
+}
 .device-card.online {
   border-color: var(--line-strong);
+}
+.device-card.menu-open {
+  z-index: 3;
+  border-color: color-mix(in srgb, var(--focus) 55%, var(--line-strong));
 }
 .device-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+.device-card-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.device-gear {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.device-gear:hover,
+.device-gear.active {
+  background: var(--hover);
+  color: var(--text);
+}
+.device-gear:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.device-gear .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+.device-card {
+  position: relative;
+  overflow: hidden;
+}
+.device-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--deep) 94%, var(--page));
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.device-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.device-menu-head strong {
+  font-size: 11px;
+}
+.device-menu-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.device-menu-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.device-menu-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.device-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.device-menu-heading {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.device-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.device-menu-row > span {
+  color: var(--muted);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+.device-menu-row.overlays {
+  justify-content: stretch;
+}
+.device-menu-row.overlays .control-segmented {
+  width: 100%;
+}
+.control-segmented {
+  width: auto;
+  flex: 0 0 auto;
+}
+.control-segmented .segment {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 0 5px;
+  font-size: 9.5px;
+}
+.permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.permission-actions .chip {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--faint);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 10px;
+}
+.permission-actions .chip:hover {
+  background: var(--hover);
+}
+.permission-actions .chip:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .device-icon {
   width: 22px;
@@ -925,7 +1093,7 @@ details.toolchain > .section-body {
 .device-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 5px;
   margin-top: auto;
   padding-top: 10px;
@@ -1230,8 +1398,115 @@ details.toolchain > .section-body {
 }
 .inspector-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+.recording-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--deep));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--text);
+  font-size: 10px;
+}
+.inspector-tile[data-action="screen-record-stop"] {
+  color: var(--danger);
+}
+.inspector-tile[data-action="screen-record-start"] .inspector-tile-icon {
+  color: var(--danger);
+}
+
+/* ---------- Performance ---------- */
+.perf-vitals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0;
+}
+.perf-vital {
+  min-width: 0;
+  padding: 8px 6px;
+  border-radius: 8px;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+.perf-vital strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.2;
+}
+.perf-vital span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+.perf-vital.warn {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--line));
+}
+.perf-vital.warn strong {
+  color: var(--amber);
+}
+.perf-spark {
+  position: relative;
+  height: 52px;
+  margin-bottom: 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--deep);
+  overflow: hidden;
+}
+.perf-spark.empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+.perf-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.perf-spark > span {
+  position: absolute;
+  left: 8px;
+  top: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  pointer-events: none;
+}
+.perf-threshold {
+  stroke: color-mix(in srgb, var(--amber) 55%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.perf-line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.perf-actions {
+  justify-content: flex-end;
+}
+.perf-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.perf-issue {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--amber) 10%, var(--deep));
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
+  color: var(--text);
+  font-size: 10px;
 }
 .inspector-tile {
   display: flex;

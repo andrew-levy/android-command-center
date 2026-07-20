@@ -159,3 +159,57 @@ test('SQLite is configurable and represented in toolchain state', () => {
   assert.match(panel, /dependencyRow\('SQLite',state\.sqliteStatus,state\.sqliteVersion,state\.sqliteMessage\)/);
   assert.match(extension, /run\(sqlite\(\), \['-version'\], undefined, REFRESH_CHECK_TIMEOUT_MS\)/);
 });
+
+test('Devices section uses card gear menus for controls and keeps create inline', () => {
+  assert.match(panel, /function deviceSection\(/);
+  assert.match(panel, /emulatorCreateRow\(cliReady\)/);
+  assert.match(panel, /function deviceSettingsMenu\(/);
+  assert.match(panel, /data-device-menu=/);
+  assert.match(panel, /device-gear/);
+  assert.match(panel, /actionButton\('emulator-create','Create'/);
+  assert.match(panel, /data-rotate=/);
+  assert.match(panel, /data-font=/);
+  assert.match(panel, /data-overlay=/);
+  assert.doesNotMatch(panel, /deviceControlsPanel/);
+  assert.doesNotMatch(panel, /section\('controls'/);
+  assert.match(extension, /case 'emulator-create': await this\.createEmulator/);
+  assert.match(extension, /case 'controls-rotate': await this\.setDeviceRotation/);
+  assert.match(extension, /\['emulator', 'create', '--list-profiles'\]/);
+});
+
+test('App data hosts permission grants with package actions', () => {
+  assert.match(panel, /row\('Allow',permissionControls/);
+  assert.match(panel, /data-permission=/);
+  assert.match(panel, /function appDataSection/);
+  assert.match(extension, /case 'controls-permission': await this\.setDevicePermission/);
+});
+
+test('Inspector hosts screen recording beside capture actions', () => {
+  assert.match(panel, /inspectorAction\('screen-record-start'/);
+  assert.match(panel, /inspectorAction\('screen-record-stop'/);
+  assert.match(extension, /case 'screen-record-start': await this\.startScreenRecord/);
+  assert.match(extension, /case 'screen-record-stop': await this\.stopScreenRecord/);
+  assert.match(extension, /screenrecord/);
+  assert.match(extension, /RECORDING_SAVE_DIR_KEY/);
+});
+
+test('View title exposes expand-all and collapse-all controls', () => {
+  assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.expandAll'), true);
+  assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.collapseAll'), true);
+  assert.match(extension, /androidCli\.expandAll/);
+  assert.match(extension, /setSectionsExpanded\(true\)/);
+  assert.match(panel, /data\.type==='expand-all'/);
+  assert.match(panel, /data\.type==='collapse-all'/);
+  assert.match(panel, /const ALL_SECTIONS=/);
+});
+
+test('Performance section monitors gfxinfo vitals without becoming a profiler', () => {
+  assert.match(panel, /function performanceSection\(/);
+  assert.match(panel, /section\('performance','Performance'/);
+  assert.match(panel, /actionButton\('performance-start','Monitor'/);
+  assert.match(panel, /function performanceSparkline\(/);
+  assert.match(extension, /case 'performance-start': await this\.startPerformanceMonitor/);
+  assert.match(extension, /dumpsys', 'gfxinfo'/);
+  assert.match(extension, /dumpsys', 'meminfo'/);
+  assert.match(extension, /parseGfxInfo/);
+});

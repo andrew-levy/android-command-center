@@ -3,10 +3,17 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
+  buildPerformanceIssues,
+  emulatorCreateSupported,
   buildRunTargets,
   isCompleteDeepLink,
   isMissingExecutable,
+  nearestFontScale,
+  parseBatteryDump,
   parseDevices,
+  parseEmulatorProfiles,
+  parseGfxInfo,
+  parseMemInfo,
   reconcileRunTargetSelection,
   resolveProjectRootPath,
   summarizeAdb,
@@ -99,4 +106,47 @@ test('resolveProjectRootPath falls back to the workspace folder and accepts rela
     rootPath: absolute,
     displayPath: absolute,
   });
+});
+
+test('emulator profile parsing keeps clean profile ids', () => {
+  assert.deepEqual(
+    parseEmulatorProfiles('Available profiles:\nmedium_phone\nlarge_phone - Large phone\n--help\n'),
+    ['medium_phone', 'large_phone'],
+  );
+  assert.equal(emulatorCreateSupported('darwin'), true);
+  assert.equal(emulatorCreateSupported('win32'), false);
+});
+
+test('device control helpers normalize font scale and battery dumps', () => {
+  assert.equal(nearestFontScale(1.12), 1.15);
+  assert.equal(nearestFontScale(0.9), 0.85);
+  assert.deepEqual(parseBatteryDump('Current Battery Service state:\n  level: 15\n  status: 3\n  USB powered: false\n'), {
+    level: 15,
+    charging: false,
+  });
+});
+
+test('performance parsers extract gfxinfo vitals, framestats, and meminfo', () => {
+  const gfx = parseGfxInfo([
+    'Total frames rendered: 120',
+    'Janky frames: 6 (5.00%)',
+    'Flags,IntendedVsync,Vsync,FrameCompleted',
+    '0,1000000000,1000000000,1012000000',
+    '0,1016666667,1016666667,1038333334',
+  ].join('\n'));
+  assert.equal(gfx.totalFrames, 120);
+  assert.equal(gfx.jankyFrames, 6);
+  assert.equal(gfx.jankPercent, 5);
+  assert.equal(gfx.frameTimesMs.length, 2);
+  assert.ok(gfx.slowFrames >= 1);
+  assert.equal(parseMemInfo('App Summary\n                TOTAL:   204800\n'), 200);
+  assert.deepEqual(
+    buildPerformanceIssues({totalFrames: 100, jankyFrames: 10, jankPercent: 10, fps: 40, slowFrames: 4, frameTimesMs: [], memoryMb: 320}),
+    [
+      '4 frames > 16ms in last sample',
+      'Jank 10.0% of rendered frames',
+      'Memory 320 MB is elevated',
+      'FPS around 40 looks soft',
+    ],
+  );
 });

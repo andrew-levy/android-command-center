@@ -1,21 +1,33 @@
 import * as vscode from 'vscode';
-import { execFile } from 'node:child_process';
+import { execFile, type ChildProcess, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } from './databaseInspector';
 import {
+  COMMON_PERMISSIONS,
+  buildPerformanceIssues,
+  emulatorCreateSupported,
   buildRunTargets,
   isCompleteDeepLink,
   isMissingExecutable,
+  nearestFontScale,
+  parseBatteryDump,
   parseDevices,
+  parseEmulatorProfiles,
+  parseGfxInfo,
+  parseMemInfo,
+  parseSettingsFloat,
+  parseSettingsInt,
   reconcileRunTargetSelection,
   resolveProjectRootPath,
   summarizeAdb,
   variantFromTask,
   type BuildVariant,
   type Device,
+  type DeviceControls,
+  type PerformanceMetrics,
   type RunTarget,
 } from './core';
 
@@ -27,7 +39,12 @@ const FAVORITE_LINKS_KEY = 'androidCli.favoriteDeepLinks.v1';
 const APP_PACKAGE_KEY = 'androidCli.selectedAppPackage.v1';
 const RUN_TARGETS_KEY = 'androidCli.selectedRunTargets.v1';
 const SCREENSHOT_SAVE_DIR_KEY = 'androidCli.screenshotSaveDirectory.v1';
+const RECORDING_SAVE_DIR_KEY = 'androidCli.recordingSaveDirectory.v1';
+const CONTROLS_SERIAL_KEY = 'androidCli.controlsSerial.v1';
+const SCREEN_RECORD_REMOTE = '/sdcard/Download/acc-screenrecord.mp4';
 const REFRESH_CHECK_TIMEOUT_MS = 12_000;
+const LAYOUT_BOUNDS_POKE_CODE = 1599295570;
+const PERFORMANCE_POLL_MS = 1_000;
 const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
 const SUCCESS_HOLD_MS = 2_000;
@@ -38,6 +55,19 @@ const ERROR_EXIT_MS = 180;
 type LinkResult = { ok: boolean; message: string };
 type Operation = { id: string; status: 'running' | 'success' | 'success-exit' | 'error' | 'error-exit'; message: string };
 type DependencyStatus = 'checking' | 'ready' | 'missing' | 'error';
+type PerformanceState = {
+  serial?: string;
+  packageName?: string;
+  monitoring: boolean;
+  fps?: number;
+  jankPercent?: number;
+  memoryMb?: number;
+  slowFrames?: number;
+  frameTimesMs: number[];
+  issues: string[];
+  error?: string;
+  updatedAt?: number;
+};
 type DeployFailure = { target: RunTarget; message: string };
 type DeployResult = { launched: RunTarget[]; failures: DeployFailure[]; total: number };
 type DashboardState = {
@@ -55,6 +85,11 @@ type DashboardState = {
   sdk?: string;
   devices: Device[];
   emulators: string[];
+  emulatorProfiles: string[];
+  emulatorCreateSupported: boolean;
+  selectedEmulatorProfile?: string;
+  controlsSerial?: string;
+  deviceControls?: DeviceControls;
   runTargets: RunTarget[];
   selectedRunTargets: string[];
   variants: BuildVariant[];
@@ -79,6 +114,8 @@ type DashboardState = {
   errorExiting?: boolean;
   screenshot?: string;
   screenshotSaved?: boolean;
+  recording?: { serial: string; active: boolean };
+  performance: PerformanceState;
   linkResult?: LinkResult;
   operation?: Operation;
   testOpenSections?: string[];
@@ -101,6 +138,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('androidCli.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('androidCli.openDashboard', () =>
       vscode.commands.executeCommand('workbench.view.extension.androidCli')),
+    vscode.commands.registerCommand('androidCli.expandAll', () => provider.setSectionsExpanded(true)),
+    vscode.commands.registerCommand('androidCli.collapseAll', () => provider.setSectionsExpanded(false)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('androidCli.projectRoot')) void provider.onProjectRootSettingChanged();
     }),
@@ -121,6 +160,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private readonly databases: DatabaseInspector;
   private screenshotFile?: vscode.Uri;
   private lastProjectRootKey?: string;
+  private screenRecordProcess?: ChildProcess;
+  private screenRecordSerial?: string;
+  private performancePoll?: NodeJS.Timeout;
+  private performanceSampling = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
@@ -138,6 +181,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       sdk: cached?.sdk,
       devices: cached?.devices ?? [],
       emulators: cached?.emulators ?? [],
+      emulatorProfiles: cached?.emulatorProfiles ?? [],
+      emulatorCreateSupported: emulatorCreateSupported(),
+      selectedEmulatorProfile: cached?.selectedEmulatorProfile ?? 'medium_phone',
+      controlsSerial: context.workspaceState.get<string>(CONTROLS_SERIAL_KEY) ?? cached?.controlsSerial,
       runTargets: buildRunTargets(cached?.devices ?? [], cached?.emulators ?? []),
       selectedRunTargets: storedRunTargets ?? [],
       variants: cached?.variants ?? [],
@@ -150,6 +197,13 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       appPackages: cached?.appPackages ?? [],
       appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
+      performance: {
+        serial: cached?.performance?.serial,
+        packageName: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
+        monitoring: false,
+        frameTimesMs: [],
+        issues: [],
+      },
       initializing: true,
       testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
@@ -178,6 +232,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   dispose(): void {
     if (this.devicePoll) clearInterval(this.devicePoll);
     this.devicePoll = undefined;
+    this.stopPerformanceMonitor();
+    void this.stopScreenRecordProcess();
     void this.databases.dispose();
     if (this.screenshotFile) void vscode.workspace.fs.delete(this.screenshotFile, { useTrash: false }).then(undefined, () => undefined);
   }
@@ -189,6 +245,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       const devices = await enrichDevices(parseDevices(await run(adb(), ['devices', '-l'])));
       if (JSON.stringify(devices) === JSON.stringify(this.state.devices)) return;
       this.state.devices = devices;
+      this.syncControlsSerial();
       await this.updateRunTargets();
       this.persistCache();
       this.render();
@@ -215,13 +272,17 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       this.applyVariants([variantFromTask(config().get<string>('gradleTask', 'assembleDebug'))]);
     }
     const variantDiscovery = shouldDiscover && root ? this.discoverProjectVariants(root) : undefined;
-    const [cliVersion, info, adbVersion, sqliteVersion, devices, emulators] = await Promise.allSettled([
+    const profilesRequest = this.state.emulatorCreateSupported
+      ? run(cli(), ['emulator', 'create', '--list-profiles'], undefined, REFRESH_CHECK_TIMEOUT_MS)
+      : Promise.reject(new Error('Emulator create is unavailable on Windows.'));
+    const [cliVersion, info, adbVersion, sqliteVersion, devices, emulators, profiles] = await Promise.allSettled([
       run(cli(), ['--version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
       run(cli(), ['info'], undefined, REFRESH_CHECK_TIMEOUT_MS),
       run(adb(), ['version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
       run(sqlite(), ['-version'], undefined, REFRESH_CHECK_TIMEOUT_MS),
       run(adb(), ['devices', '-l'], undefined, REFRESH_CHECK_TIMEOUT_MS),
       run(cli(), ['emulator', 'list'], undefined, REFRESH_CHECK_TIMEOUT_MS),
+      profilesRequest,
     ]);
     this.state.cliAvailable = cliVersion.status === 'fulfilled';
     this.state.cliStatus = cliVersion.status === 'rejected'
@@ -247,6 +308,18 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.devices = devices.status === 'fulfilled' ? await enrichDevices(parseDevices(devices.value)) : this.state.devices;
     this.state.emulators = emulators.status === 'fulfilled'
       ? emulators.value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : this.state.emulators;
+    this.state.emulatorCreateSupported = emulatorCreateSupported();
+    if (profiles.status === 'fulfilled') {
+      const parsed = parseEmulatorProfiles(profiles.value);
+      this.state.emulatorProfiles = parsed.length ? parsed : this.state.emulatorProfiles;
+      if (!this.state.emulatorProfiles.includes(this.state.selectedEmulatorProfile ?? '')) {
+        this.state.selectedEmulatorProfile = this.state.emulatorProfiles[0] ?? 'medium_phone';
+      }
+    }
+    this.syncControlsSerial();
+    if (this.state.controlsSerial && this.state.adbStatus === 'ready') {
+      await this.refreshDeviceControls(this.state.controlsSerial).catch(() => undefined);
+    }
     await this.updateRunTargets();
     if (!initialLoad && variantDiscovery) await variantDiscovery;
     if (root && project.status === 'ready') {
@@ -309,8 +382,30 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'start': await this.startEmulator(String(message.name)); return;
         case 'stop': await this.stopDevice(String(message.serial)); return;
         case 'theme': await this.setDeviceTheme(String(message.serial), String(message.theme)); return;
+        case 'emulator-profile': this.selectEmulatorProfile(String(message.profile ?? '')); return;
+        case 'emulator-create': await this.createEmulator(String(message.profile ?? '')); return;
+        case 'controls-serial': await this.selectControlsSerial(String(message.serial ?? '')); return;
+        case 'controls-rotate': await this.setDeviceRotation(String(message.serial ?? ''), Number(message.rotation)); return;
+        case 'controls-font': await this.setDeviceFontScale(String(message.serial ?? ''), Number(message.scale)); return;
+        case 'controls-battery-level': await this.setDeviceBatteryLevel(String(message.serial ?? ''), Number(message.level)); return;
+        case 'controls-battery-charging': await this.setDeviceBatteryCharging(String(message.serial ?? ''), Boolean(message.charging)); return;
+        case 'controls-overlay': await this.setDeviceOverlay(String(message.serial ?? ''), String(message.overlay ?? ''), Boolean(message.enabled)); return;
+        case 'controls-permission': await this.setDevicePermission(
+          String(message.serial ?? ''),
+          String(message.packageName ?? ''),
+          String(message.permission ?? ''),
+          Boolean(message.grant),
+        ); return;
         case 'screenshot': await this.screenshot(Boolean(message.annotate)); return;
         case 'screenshot-save': await this.saveScreenshot(); return;
+        case 'screen-record-start': await this.startScreenRecord(String(message.serial ?? '')); return;
+        case 'screen-record-stop': await this.stopScreenRecord(true); return;
+        case 'performance-serial': this.setPerformanceSerial(String(message.serial ?? '')); return;
+        case 'performance-package': this.setPerformancePackage(String(message.packageName ?? '')); return;
+        case 'performance-start': await this.startPerformanceMonitor(String(message.serial ?? ''), String(message.packageName ?? '')); return;
+        case 'performance-stop': this.stopPerformanceMonitor(); this.render(); return;
+        case 'performance-reset': await this.resetPerformanceCounters(); return;
+        case 'performance-dump': await this.dumpPerformance(); return;
         case 'layout': await this.layout(); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
@@ -518,6 +613,239 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       run(adb(), ['-s', serial, 'shell', 'cmd', 'uimode', 'night', theme === 'dark' ? 'yes' : 'no']),
     `theme:${serial}`, `${theme[0].toUpperCase()}${theme.slice(1)} mode enabled`);
     await this.refresh(false);
+  }
+
+  private selectEmulatorProfile(profile: string): void {
+    if (!profile) return;
+    this.state.selectedEmulatorProfile = profile;
+    this.persistCache();
+    this.render();
+  }
+
+  private async createEmulator(profile: string): Promise<void> {
+    if (!this.state.emulatorCreateSupported) {
+      throw new Error('Android CLI emulator create is currently unavailable on Windows.');
+    }
+    const selected = profile.trim() || this.state.selectedEmulatorProfile || this.state.emulatorProfiles[0] || 'medium_phone';
+    this.state.selectedEmulatorProfile = selected;
+    await this.busy(
+      `Creating ${selected}…`,
+      () => run(cli(), ['emulator', 'create', `--profile=${selected}`], undefined, 300_000),
+      'emulator-create',
+      `${selected} created`,
+    );
+    await this.refresh(false);
+  }
+
+  private syncControlsSerial(): void {
+    const online = this.state.devices.filter((device) => device.state === 'device');
+    if (!online.length) {
+      this.state.controlsSerial = undefined;
+      this.state.deviceControls = undefined;
+      return;
+    }
+    if (!online.some((device) => device.serial === this.state.controlsSerial)) {
+      this.state.controlsSerial = online[0]?.serial;
+    }
+    void this.context.workspaceState.update(CONTROLS_SERIAL_KEY, this.state.controlsSerial);
+  }
+
+  private async selectControlsSerial(serial: string): Promise<void> {
+    if (!serial) return;
+    this.state.controlsSerial = serial;
+    await this.context.workspaceState.update(CONTROLS_SERIAL_KEY, serial);
+    await this.refreshDeviceControls(serial);
+    this.render();
+  }
+
+  private async refreshDeviceControls(serial: string): Promise<void> {
+    if (!serial) return;
+    const isEmulator = serial.startsWith('emulator-');
+    const reads = [
+      run(adb(), ['-s', serial, 'shell', 'settings', 'get', 'system', 'font_scale'], undefined, 5_000),
+      run(adb(), ['-s', serial, 'shell', 'settings', 'get', 'system', 'user_rotation'], undefined, 5_000),
+      run(adb(), ['-s', serial, 'shell', 'settings', 'get', 'system', 'show_touches'], undefined, 5_000),
+      run(adb(), ['-s', serial, 'shell', 'settings', 'get', 'system', 'pointer_location'], undefined, 5_000),
+      run(adb(), ['-s', serial, 'shell', 'getprop', 'debug.layout'], undefined, 5_000),
+    ];
+    if (isEmulator) reads.push(run(adb(), ['-s', serial, 'shell', 'dumpsys', 'battery'], undefined, 5_000));
+    const [fontScale, rotation, showTouches, pointerLocation, layoutBounds, battery] = await Promise.allSettled(reads);
+    const batteryInfo = battery?.status === 'fulfilled' ? parseBatteryDump(battery.value) : {};
+    this.state.deviceControls = {
+      serial,
+      isEmulator,
+      fontScale: nearestFontScale(fontScale.status === 'fulfilled' ? parseSettingsFloat(fontScale.value, 1) : 1),
+      rotation: rotation.status === 'fulfilled' ? Math.max(0, Math.min(3, parseSettingsInt(rotation.value, 0))) : 0,
+      showTouches: showTouches.status === 'fulfilled' ? parseSettingsInt(showTouches.value, 0) === 1 : false,
+      pointerLocation: pointerLocation.status === 'fulfilled' ? parseSettingsInt(pointerLocation.value, 0) === 1 : false,
+      layoutBounds: layoutBounds.status === 'fulfilled' ? /^(true|1)$/i.test(layoutBounds.value.trim()) : false,
+      batteryLevel: batteryInfo.level,
+      batteryCharging: batteryInfo.charging,
+    };
+  }
+
+  private async setDeviceRotation(serial: string, rotation: number): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    if (![0, 1, 2, 3].includes(rotation)) throw new Error('Choose a valid rotation.');
+    await this.busy(`Rotating device…`, async () => {
+      await run(adb(), ['-s', target, 'shell', 'settings', 'put', 'system', 'accelerometer_rotation', '0']);
+      await run(adb(), ['-s', target, 'shell', 'settings', 'put', 'system', 'user_rotation', String(rotation)]);
+    }, 'controls-rotate', 'Rotation updated');
+    await this.refreshDeviceControls(target);
+    this.render();
+  }
+
+  private async setDeviceFontScale(serial: string, scale: number): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    const next = nearestFontScale(scale);
+    await this.busy(`Updating font scale…`, () =>
+      run(adb(), ['-s', target, 'shell', 'settings', 'put', 'system', 'font_scale', String(next)]),
+    'controls-font', 'Font scale updated');
+    await this.refreshDeviceControls(target);
+    this.render();
+  }
+
+  private async setDeviceBatteryLevel(serial: string, level: number): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    if (!target.startsWith('emulator-')) throw new Error('Battery controls require an emulator.');
+    if (!Number.isFinite(level) || level < 0 || level > 100) throw new Error('Choose a battery level between 0 and 100.');
+    await this.busy(`Setting battery to ${Math.round(level)}%…`, () =>
+      run(adb(), ['-s', target, 'shell', 'dumpsys', 'battery', 'set', 'level', String(Math.round(level))]),
+    'controls-battery', `Battery set to ${Math.round(level)}%`);
+    await this.refreshDeviceControls(target);
+    this.render();
+  }
+
+  private async setDeviceBatteryCharging(serial: string, charging: boolean): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    if (!target.startsWith('emulator-')) throw new Error('Battery controls require an emulator.');
+    await this.busy(charging ? 'Plugging in charger…' : 'Unplugging charger…', async () => {
+      if (charging) {
+        await run(adb(), ['-s', target, 'shell', 'dumpsys', 'battery', 'set', 'ac', '1']);
+        await run(adb(), ['-s', target, 'shell', 'dumpsys', 'battery', 'set', 'status', '2']);
+      } else {
+        await run(adb(), ['-s', target, 'shell', 'dumpsys', 'battery', 'unplug']);
+        await run(adb(), ['-s', target, 'shell', 'dumpsys', 'battery', 'set', 'status', '3']);
+      }
+    }, 'controls-battery', charging ? 'Charging enabled' : 'Charging disabled');
+    await this.refreshDeviceControls(target);
+    this.render();
+  }
+
+  private async setDeviceOverlay(serial: string, overlay: string, enabled: boolean): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    const value = enabled ? '1' : '0';
+    await this.busy(enabled ? `Enabling ${overlay}…` : `Disabling ${overlay}…`, async () => {
+      if (overlay === 'touches') {
+        await run(adb(), ['-s', target, 'shell', 'settings', 'put', 'system', 'show_touches', value]);
+      } else if (overlay === 'pointer') {
+        await run(adb(), ['-s', target, 'shell', 'settings', 'put', 'system', 'pointer_location', value]);
+      } else if (overlay === 'bounds') {
+        await run(adb(), ['-s', target, 'shell', 'setprop', 'debug.layout', enabled ? 'true' : 'false']);
+        await run(adb(), ['-s', target, 'shell', 'service', 'call', 'activity', String(LAYOUT_BOUNDS_POKE_CODE)]);
+      } else {
+        throw new Error(`Unknown overlay: ${overlay}`);
+      }
+    }, `overlay:${overlay}`, enabled ? 'Overlay enabled' : 'Overlay disabled');
+    await this.refreshDeviceControls(target);
+    this.render();
+  }
+
+  private async setDevicePermission(serial: string, packageName: string, permission: string, grant: boolean): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
+    const pkg = packageName.trim() || this.state.selectedAppPackage || this.state.applicationId;
+    if (!pkg) throw new Error('Choose a package for permission changes.');
+    const known = COMMON_PERMISSIONS.some((item) => item.permission === permission);
+    if (!known) throw new Error('Choose a supported permission.');
+    await this.busy(grant ? `Granting permission…` : `Revoking permission…`, () =>
+      run(adb(), ['-s', target, 'shell', 'pm', grant ? 'grant' : 'revoke', pkg, permission]),
+    'controls-permission', grant ? 'Permission granted' : 'Permission revoked');
+  }
+
+  private requireOnlineSerial(serial: string): string {
+    const target = serial || this.state.controlsSerial || '';
+    const online = this.state.devices.some((device) => device.serial === target && device.state === 'device');
+    if (!target || !online) throw new Error('Connect or start an Android device first.');
+    return target;
+  }
+
+  private async startScreenRecord(serial: string): Promise<void> {
+    if (this.state.recording?.active) throw new Error('A screen recording is already in progress.');
+    const target = serial || await this.chooseDevice();
+    if (!target) throw new Error('Connect or start an Android device first.');
+    await run(adb(), ['-s', target, 'shell', 'rm', '-f', SCREEN_RECORD_REMOTE]).catch(() => undefined);
+    const child = spawn(adb(), ['-s', target, 'shell', 'screenrecord', '--time-limit=180', SCREEN_RECORD_REMOTE], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    this.screenRecordProcess = child;
+    this.screenRecordSerial = target;
+    this.state.recording = { serial: target, active: true };
+    this.render();
+    child.on('exit', () => {
+      if (this.screenRecordProcess !== child) return;
+      this.screenRecordProcess = undefined;
+      if (this.state.recording?.active && this.state.recording.serial === target) {
+        this.state.recording = undefined;
+        this.render();
+      }
+    });
+    this.showOperationSuccess('screen-record', 'Recording started');
+  }
+
+  private async stopScreenRecord(save: boolean): Promise<void> {
+    const serial = this.screenRecordSerial || this.state.recording?.serial;
+    if (!serial) {
+      this.state.recording = undefined;
+      this.render();
+      return;
+    }
+    await this.busy('Stopping recording…', async () => {
+      await run(adb(), ['-s', serial, 'shell', 'pkill', '-2', 'screenrecord']).catch(() => undefined);
+      await this.stopScreenRecordProcess();
+      await new Promise<void>((resolve) => setTimeout(resolve, 700));
+      if (!save) {
+        await run(adb(), ['-s', serial, 'shell', 'rm', '-f', SCREEN_RECORD_REMOTE]).catch(() => undefined);
+        return;
+      }
+      const folder = vscode.Uri.joinPath(this.privateStorageUri(), 'recordings');
+      await vscode.workspace.fs.createDirectory(folder);
+      const local = vscode.Uri.joinPath(folder, recordingFilename());
+      await run(adb(), ['-s', serial, 'pull', SCREEN_RECORD_REMOTE, local.fsPath], undefined, 60_000);
+      await run(adb(), ['-s', serial, 'shell', 'rm', '-f', SCREEN_RECORD_REMOTE]).catch(() => undefined);
+      const defaultUri = this.defaultRecordingSaveUri(path.basename(local.fsPath));
+      const target = await vscode.window.showSaveDialog({
+        title: 'Save screen recording',
+        saveLabel: 'Save Recording',
+        defaultUri,
+        filters: { 'MPEG-4 video': ['mp4'] },
+      });
+      if (!target) {
+        await vscode.workspace.fs.delete(local, { useTrash: false }).then(undefined, () => undefined);
+        throw new UserCancelledError();
+      }
+      await vscode.workspace.fs.copy(local, target, { overwrite: true });
+      await vscode.workspace.fs.delete(local, { useTrash: false }).then(undefined, () => undefined);
+      await this.context.globalState.update(RECORDING_SAVE_DIR_KEY, uriDirectory(target).toString());
+    }, 'screen-record', 'Recording saved');
+    this.screenRecordSerial = undefined;
+    this.state.recording = undefined;
+    this.render();
+  }
+
+  private async stopScreenRecordProcess(): Promise<void> {
+    const child = this.screenRecordProcess;
+    this.screenRecordProcess = undefined;
+    if (!child || child.killed) return;
+    try { child.kill('SIGTERM'); } catch { /* Process may already be gone. */ }
+  }
+
+  private defaultRecordingSaveUri(filename: string): vscode.Uri {
+    const saved = this.context.globalState.get<string>(RECORDING_SAVE_DIR_KEY);
+    if (saved) {
+      try { return vscode.Uri.joinPath(vscode.Uri.parse(saved), filename); }
+      catch { /* Fall back to the user's home directory. */ }
+    }
+    return vscode.Uri.file(path.join(os.homedir(), filename));
   }
 
   private async screenshot(annotate: boolean): Promise<void> {
@@ -741,6 +1069,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (!trimmed) return;
     this.state.selectedAppPackage = trimmed;
     this.state.appDataMessage = undefined;
+    this.state.performance = { ...this.state.performance, packageName: trimmed };
     await this.context.workspaceState.update(APP_PACKAGE_KEY, trimmed);
     this.persistCache();
     this.render();
@@ -990,6 +1319,139 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     void this.context.workspaceState.update(VARIANT_KEY, undefined);
   }
 
+  private setPerformanceSerial(serial: string): void {
+    this.state.performance = { ...this.state.performance, serial: serial || undefined, error: undefined };
+    this.render();
+  }
+
+  private setPerformancePackage(packageName: string): void {
+    this.state.performance = { ...this.state.performance, packageName: packageName || undefined, error: undefined };
+    this.render();
+  }
+
+  private performanceTarget(): { serial: string; packageName: string } {
+    const online = this.state.devices.filter((device) => device.state === 'device');
+    const serial = this.state.performance.serial
+      && online.some((device) => device.serial === this.state.performance.serial)
+      ? this.state.performance.serial
+      : online[0]?.serial;
+    const packageName = this.state.performance.packageName
+      || this.state.selectedAppPackage
+      || this.state.applicationId;
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    if (!packageName) throw new Error('Choose a package to monitor.');
+    return { serial, packageName };
+  }
+
+  private async startPerformanceMonitor(serial: string, packageName: string): Promise<void> {
+    if (serial) this.state.performance.serial = serial;
+    if (packageName) this.state.performance.packageName = packageName;
+    const target = this.performanceTarget();
+    this.state.performance = {
+      ...this.state.performance,
+      serial: target.serial,
+      packageName: target.packageName,
+      monitoring: true,
+      error: undefined,
+      issues: [],
+    };
+    this.render();
+    if (this.performancePoll) clearInterval(this.performancePoll);
+    await this.samplePerformance();
+    this.performancePoll = setInterval(() => void this.samplePerformance(), PERFORMANCE_POLL_MS);
+  }
+
+  private stopPerformanceMonitor(): void {
+    if (this.performancePoll) clearInterval(this.performancePoll);
+    this.performancePoll = undefined;
+    this.performanceSampling = false;
+    this.state.performance = { ...this.state.performance, monitoring: false };
+  }
+
+  private async samplePerformance(): Promise<void> {
+    if (this.performanceSampling || !this.state.performance.monitoring) return;
+    this.performanceSampling = true;
+    try {
+      const { serial, packageName } = this.performanceTarget();
+      const [gfxResult, memResult] = await Promise.allSettled([
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'framestats'], undefined, 8_000),
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'meminfo', packageName], undefined, 8_000),
+      ]);
+      if (gfxResult.status !== 'fulfilled') throw gfxResult.reason;
+      const gfx = parseGfxInfo(gfxResult.value);
+      const memoryMb = memResult.status === 'fulfilled' ? parseMemInfo(memResult.value) : this.state.performance.memoryMb;
+      const metrics: PerformanceMetrics = { ...gfx, memoryMb };
+      this.state.performance = {
+        ...this.state.performance,
+        serial,
+        packageName,
+        fps: metrics.fps,
+        jankPercent: metrics.jankPercent,
+        memoryMb: metrics.memoryMb,
+        slowFrames: metrics.slowFrames,
+        frameTimesMs: metrics.frameTimesMs.length
+          ? metrics.frameTimesMs
+          : this.state.performance.frameTimesMs,
+        issues: buildPerformanceIssues(metrics),
+        error: undefined,
+        updatedAt: Date.now(),
+      };
+      this.render();
+    } catch (error) {
+      this.state.performance = {
+        ...this.state.performance,
+        error: messageOf(error),
+        issues: [],
+      };
+      this.render();
+    } finally {
+      this.performanceSampling = false;
+    }
+  }
+
+  private async resetPerformanceCounters(): Promise<void> {
+    const { serial, packageName } = this.performanceTarget();
+    await this.busy('Resetting graphics counters…', () =>
+      run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'reset']),
+    'performance-reset', 'Graphics counters reset');
+    this.state.performance = {
+      ...this.state.performance,
+      fps: undefined,
+      jankPercent: undefined,
+      slowFrames: undefined,
+      frameTimesMs: [],
+      issues: [],
+      error: undefined,
+    };
+    if (this.state.performance.monitoring) await this.samplePerformance();
+    else this.render();
+  }
+
+  private async dumpPerformance(): Promise<void> {
+    const { serial, packageName } = this.performanceTarget();
+    const content = await this.busy('Dumping performance…', async () => {
+      const [gfx, mem] = await Promise.all([
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'gfxinfo', packageName, 'framestats'], undefined, 20_000),
+        run(adb(), ['-s', serial, 'shell', 'dumpsys', 'meminfo', packageName], undefined, 20_000),
+      ]);
+      return [
+        `# Performance dump`,
+        `# device: ${serial}`,
+        `# package: ${packageName}`,
+        `# captured: ${new Date().toISOString()}`,
+        '',
+        '## gfxinfo framestats',
+        gfx.trim(),
+        '',
+        '## meminfo',
+        mem.trim(),
+        '',
+      ].join('\n');
+    }, 'performance-dump', 'Performance dump opened');
+    const document = await vscode.workspace.openTextDocument({ language: 'markdown', content });
+    await vscode.window.showTextDocument(document, { preview: true });
+  }
+
   private persistCache(): void {
     const {
       busy: _busy,
@@ -997,6 +1459,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       errorExiting: _errorExiting,
       screenshot: _screenshot,
       screenshotSaved: _screenshotSaved,
+      recording: _recording,
+      deviceControls: _deviceControls,
+      performance: performanceState,
       linkResult: _result,
       operation: _operation,
       database: _database,
@@ -1010,7 +1475,20 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       selectedRunTargets: _selectedRunTargets,
       ...cache
     } = this.state;
-    void this.context.workspaceState.update(CACHE_KEY, cache);
+    void this.context.workspaceState.update(CACHE_KEY, {
+      ...cache,
+      performance: {
+        serial: performanceState.serial,
+        packageName: performanceState.packageName,
+        monitoring: false,
+        frameTimesMs: [],
+        issues: [],
+      },
+    });
+  }
+
+  setSectionsExpanded(expanded: boolean): void {
+    void this.view?.webview.postMessage({ type: expanded ? 'expand-all' : 'collapse-all' });
   }
 
   private render(): void { void this.view?.webview.postMessage({ type: 'state', state: this.state }); }
@@ -1019,6 +1497,11 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
 function screenshotFilename(annotate: boolean): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   return `screen-${timestamp}${annotate ? '-annotated' : ''}.png`;
+}
+
+function recordingFilename(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `record-${timestamp}.mp4`;
 }
 
 function uriDirectory(uri: vscode.Uri): vscode.Uri {

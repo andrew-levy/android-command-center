@@ -32,6 +32,181 @@ export function resolveProjectRootPath(
   return { rootPath, displayPath: trimmed.replace(/\\/g, '/') };
 }
 
+export type DeviceControls = {
+  serial: string;
+  isEmulator: boolean;
+  fontScale: number;
+  rotation: number;
+  showTouches: boolean;
+  pointerLocation: boolean;
+  layoutBounds: boolean;
+  batteryLevel?: number;
+  batteryCharging?: boolean;
+};
+
+export const FONT_SCALE_PRESETS = [
+  { id: 'small', label: 'S', value: 0.85 },
+  { id: 'default', label: 'M', value: 1 },
+  { id: 'large', label: 'L', value: 1.15 },
+  { id: 'largest', label: 'XL', value: 1.3 },
+] as const;
+
+export const ROTATION_PRESETS = [
+  { id: '0', label: '0°', value: 0 },
+  { id: '90', label: '90°', value: 1 },
+  { id: '180', label: '180°', value: 2 },
+  { id: '270', label: '270°', value: 3 },
+] as const;
+
+export const BATTERY_LEVEL_PRESETS = [5, 15, 50, 85, 100] as const;
+
+export const COMMON_PERMISSIONS = [
+  { id: 'location', label: 'Location', permission: 'android.permission.ACCESS_FINE_LOCATION' },
+  { id: 'camera', label: 'Camera', permission: 'android.permission.CAMERA' },
+  { id: 'mic', label: 'Mic', permission: 'android.permission.RECORD_AUDIO' },
+  { id: 'notifications', label: 'Alerts', permission: 'android.permission.POST_NOTIFICATIONS' },
+] as const;
+
+export function parseEmulatorProfiles(output: string): string[] {
+  return unique(
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !/^(profile|name|available|device profiles|--)/i.test(line))
+      .map((line) => line.split(/\s+/)[0] ?? '')
+      .filter((name) => /^[A-Za-z0-9._-]+$/.test(name)),
+  );
+}
+
+export function nearestFontScale(value: number): number {
+  let best: number = FONT_SCALE_PRESETS[1].value;
+  let distance = Math.abs(value - best);
+  for (const preset of FONT_SCALE_PRESETS) {
+    const next = Math.abs(value - preset.value);
+    if (next < distance) {
+      best = preset.value;
+      distance = next;
+    }
+  }
+  return best;
+}
+
+export function parseSettingsInt(output: string, fallback = 0): number {
+  const match = output.match(/-?\d+/);
+  return match ? Number(match[0]) : fallback;
+}
+
+export function parseSettingsFloat(output: string, fallback = 1): number {
+  const match = output.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : fallback;
+}
+
+export function parseBatteryDump(output: string): { level?: number; charging?: boolean } {
+  const levelMatch = output.match(/^\s*level:\s*(\d+)/m);
+  const statusMatch = output.match(/^\s*status:\s*(\d+)/m);
+  const pluggedMatch = output.match(/^\s*powered:\s*(true|false)/im)
+    ?? output.match(/^\s*USB powered:\s*(true|false)/im);
+  const level = levelMatch ? Number(levelMatch[1]) : undefined;
+  const status = statusMatch ? Number(statusMatch[1]) : undefined;
+  const charging = pluggedMatch
+    ? pluggedMatch[1].toLowerCase() === 'true'
+    : status === 2 || status === 5;
+  return { level, charging };
+}
+
+export function emulatorCreateSupported(platform = process.platform): boolean {
+  return platform !== 'win32';
+}
+
+export type PerformanceMetrics = {
+  totalFrames: number;
+  jankyFrames: number;
+  jankPercent: number;
+  fps?: number;
+  slowFrames: number;
+  frameTimesMs: number[];
+  memoryMb?: number;
+};
+
+export function parseFrameStats(output: string): number[] {
+  const lines = output.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => /^Flags,/i.test(line.trim()));
+  if (headerIndex < 0) return [];
+  const header = lines[headerIndex].split(',').map((item) => item.trim());
+  const intendedIdx = header.findIndex((item) => /^IntendedVsync$/i.test(item));
+  const completedIdx = header.findIndex((item) => /^FrameCompleted$/i.test(item));
+  if (intendedIdx < 0 || completedIdx < 0) return [];
+  const times: number[] = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('---') || /^[A-Za-z]/.test(trimmed)) break;
+    const cols = trimmed.split(',');
+    const intended = Number(cols[intendedIdx]);
+    const completed = Number(cols[completedIdx]);
+    if (!Number.isFinite(intended) || !Number.isFinite(completed) || completed <= intended) continue;
+    const ms = (completed - intended) / 1_000_000;
+    if (ms > 0 && ms < 5_000) times.push(ms);
+  }
+  return times.slice(-40);
+}
+
+export function parseGfxInfo(output: string): Omit<PerformanceMetrics, 'memoryMb'> {
+  const totalFrames = Number(output.match(/Total frames rendered:\s*(\d+)/i)?.[1] ?? 0);
+  const jankyFrames = Number(output.match(/Janky frames:\s*(\d+)/i)?.[1] ?? 0);
+  const explicitPercent = output.match(/Janky frames:\s*\d+\s*\(([\d.]+)\s*%\)/i)?.[1];
+  const jankPercent = explicitPercent
+    ? Number(explicitPercent)
+    : totalFrames > 0 ? (jankyFrames / totalFrames) * 100 : 0;
+  const frameTimesMs = parseFrameStats(output);
+  const slowFrames = frameTimesMs.filter((ms) => ms > 16.67).length
+    || Number(output.match(/Number Missed Vsync:\s*(\d+)/i)?.[1] ?? 0);
+  let fps: number | undefined;
+  if (frameTimesMs.length >= 2) {
+    const average = frameTimesMs.reduce((sum, ms) => sum + ms, 0) / frameTimesMs.length;
+    if (average > 0) fps = Math.max(1, Math.min(60, Math.round(1000 / average)));
+  } else {
+    const percentile = output.match(/50th percentile:\s*(\d+)\s*ms/i)?.[1];
+    if (percentile) {
+      const ms = Number(percentile);
+      if (ms > 0) fps = Math.max(1, Math.min(60, Math.round(1000 / ms)));
+    }
+  }
+  return {
+    totalFrames,
+    jankyFrames,
+    jankPercent: Number.isFinite(jankPercent) ? jankPercent : 0,
+    fps,
+    slowFrames,
+    frameTimesMs,
+  };
+}
+
+export function parseMemInfo(output: string): number | undefined {
+  const appSummary = output.match(/App Summary[\s\S]*?TOTAL:\s*([\d,]+)/i)?.[1];
+  if (appSummary) return Number(appSummary.replace(/,/g, '')) / 1024;
+  const totalPss = output.match(/TOTAL\s+PSS:\s*([\d,]+)/i)?.[1]
+    ?? output.match(/^\s*TOTAL\s+(\d+)/m)?.[1];
+  if (totalPss) return Number(totalPss.replace(/,/g, '')) / 1024;
+  return undefined;
+}
+
+export function buildPerformanceIssues(metrics: PerformanceMetrics): string[] {
+  const issues: string[] = [];
+  if (metrics.slowFrames > 0) {
+    issues.push(`${metrics.slowFrames} frame${metrics.slowFrames === 1 ? '' : 's'} > 16ms in last sample`);
+  }
+  if (metrics.jankPercent >= 5) {
+    issues.push(`Jank ${metrics.jankPercent.toFixed(1)}% of rendered frames`);
+  }
+  if (metrics.memoryMb != null && metrics.memoryMb >= 300) {
+    issues.push(`Memory ${metrics.memoryMb.toFixed(0)} MB is elevated`);
+  }
+  if (metrics.fps != null && metrics.fps < 45) {
+    issues.push(`FPS around ${metrics.fps} looks soft`);
+  }
+  return issues.slice(0, 4);
+}
+
 export type RunTarget = {
   id: string;
   kind: 'device' | 'emulator';
@@ -41,7 +216,6 @@ export type RunTarget = {
   serial?: string;
   avdName?: string;
 };
-
 export type BuildVariant = {
   id: string;
   label: string;
@@ -116,6 +290,10 @@ export function isMissingExecutable(error: unknown): boolean {
 
 export function isCompleteDeepLink(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim());
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function messageOf(error: unknown): string {
