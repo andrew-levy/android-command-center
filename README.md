@@ -15,7 +15,7 @@ A Cursor/VS Code activity-bar panel for everyday Android development without ope
 
 ## Quick start
 
-1. Install the extension and open an Android project in VS Code or Cursor. If you open a parent monorepo folder, set `androidCli.projectRoot` to the Android app directory that contains `gradlew`.
+1. Install the extension and open an Android project in VS Code or Cursor. If you open a parent monorepo folder, use the Project gear to choose the Android app directory that contains `gradlew`.
 2. Select the Android robot in the activity bar.
 3. Review the **Toolchain** section and prepare or select any missing tools.
 4. Choose a Gradle variant, select one or more active deployment targets, and click **Run**. Start inactive emulators from **Devices** first.
@@ -29,7 +29,7 @@ Android Command Center uses the tools installed in the environment where its VS 
 - A project Gradle wrapper (`gradlew` or `gradlew.bat`) for Sync, Run, and Clean
 - SQLite 3 (`sqlite3`) for Database inspection
 
-The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths, and `androidCli.projectRoot` when the workspace folder is not the Gradle project root.
+The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths. When the workspace folder is not the Gradle project root, choose it with the Project gear or set `androidCli.projectRoot` directly.
 
 ## Features
 

@@ -109,7 +109,13 @@ test('Project root is configurable and refreshes when the setting changes', () =
   assert.match(panel, /const rootHint=['"]Project root['"]/);
   assert.match(panel, /row\(\s*['"]Project['"]/);
   assert.match(panel, /data-setup="project-root-settings"/);
-  assert.match(extension, /case 'project-root-settings'.*androidCli\.projectRoot/);
+  assert.match(extension, /case 'project-root-settings': await this\.chooseProjectRoot\(\)/);
+  assert.match(extension, /title: 'Choose Android project root'/);
+  assert.match(extension, /canSelectFolders: true/);
+  assert.match(extension, /fs\.existsSync\(gradleWrapperPath\(selected\)\)/);
+  assert.match(extension, /projectRootSettingValue\(selected\.fsPath, workspace\?\.fsPath\)/);
+  assert.match(extension, /update\('projectRoot', value, vscode\.ConfigurationTarget\.Workspace\)/);
+  assert.doesNotMatch(extension, /openSettings', 'androidCli\.projectRoot'/);
   assert.match(panel, /project-root-message/);
 });
 

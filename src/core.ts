@@ -32,6 +32,18 @@ export function resolveProjectRootPath(
   return { rootPath, displayPath: trimmed.replace(/\\/g, '/') };
 }
 
+/** Persist workspace-contained roots as portable relative paths. */
+export function projectRootSettingValue(selectedPath: string, workspacePath?: string): string {
+  const selected = path.normalize(selectedPath);
+  if (!workspacePath) return selected;
+  const relative = path.relative(path.normalize(workspacePath), selected);
+  if (!relative) return '';
+  const outsideWorkspace = relative === '..'
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative);
+  return outsideWorkspace ? selected : relative.replace(/\\/g, '/');
+}
+
 export type DeviceControls = {
   serial: string;
   isEmulator: boolean;

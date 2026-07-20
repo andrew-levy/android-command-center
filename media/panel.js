@@ -180,7 +180,7 @@ function buildSection(variants,selected,cliReady,adbReady){
   +row('Run app',actionButton('build-run','Run','primary compact',!availability.run),'','Build + launch')
   +row('Clean',actionButton('clean','Clean','secondary compact',!availability.clean),'','Remove outputs')
   +row('Gradle Sync',actionButton('gradle-sync','Sync','secondary compact',!availability.sync),'','Refresh dependencies')
-  +row('Project','<span class="project-root-control"><span class="project-root" dir="ltr" title="'+esc(rootLabel)+'">'+esc(rootLabel)+'</span><button class="project-root-settings" type="button" data-setup="project-root-settings" title="Open project root setting" aria-label="Open project root setting">'+icon('settings')+'</button></span>','',rootHint)
+  +row('Project','<span class="project-root-control"><span class="project-root" dir="ltr" title="'+esc(rootLabel)+'">'+esc(rootLabel)+'</span><button class="project-root-settings" type="button" data-setup="project-root-settings" title="Choose project root" aria-label="Choose project root">'+icon('settings')+'</button></span>','',rootHint)
  )+notice;
  return section('build','Build',esc(projectReady?label:'Needs project'),body);
 }

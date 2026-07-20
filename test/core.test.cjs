@@ -16,6 +16,7 @@ const {
   parseMemInfo,
   parseManifestLaunchInfo,
   parsePackagePermissionStates,
+  projectRootSettingValue,
   reconcileRunTargetSelection,
   resolveProjectRootPath,
   summarizeAdb,
@@ -108,6 +109,14 @@ test('resolveProjectRootPath falls back to the workspace folder and accepts rela
     rootPath: absolute,
     displayPath: absolute,
   });
+});
+
+test('projectRootSettingValue keeps workspace roots portable and external roots absolute', () => {
+  const workspace = path.resolve('/repo');
+  assert.equal(projectRootSettingValue(workspace, workspace), '');
+  assert.equal(projectRootSettingValue(path.join(workspace, 'apps', 'android'), workspace), 'apps/android');
+  assert.equal(projectRootSettingValue(path.resolve('/other/android-app'), workspace), path.resolve('/other/android-app'));
+  assert.equal(projectRootSettingValue(path.resolve('/other/android-app')), path.resolve('/other/android-app'));
 });
 
 test('emulator profile parsing keeps clean profile ids', () => {

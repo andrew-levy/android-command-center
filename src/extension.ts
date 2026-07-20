@@ -22,6 +22,7 @@ import {
   parsePackagePermissionStates,
   parseSettingsFloat,
   parseSettingsInt,
+  projectRootSettingValue,
   reconcileRunTargetSelection,
   resolveProjectRootPath,
   summarizeAdb,
@@ -378,7 +379,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'dependency-choose-adb': await this.chooseExecutable('adbExecutable', 'Choose the adb executable'); return;
         case 'dependency-choose-sqlite': await this.chooseExecutable('sqliteExecutable', 'Choose the sqlite3 executable'); return;
         case 'dependency-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'Android Command Center'); return;
-        case 'project-root-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'androidCli.projectRoot'); return;
+        case 'project-root-settings': await this.chooseProjectRoot(); return;
         case 'error-dismiss': this.clearError(); return;
         case 'variant': await this.selectVariant(String(message.id)); return;
         case 'run-targets': await this.selectRunTargets(Array.isArray(message.ids) ? message.ids.map(String) : []); return;
@@ -1229,6 +1230,27 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (!picked?.[0]) return;
     await config().update(setting, picked[0].fsPath, vscode.ConfigurationTarget.Global);
     await this.refresh(true);
+  }
+
+  private async chooseProjectRoot(): Promise<void> {
+    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const current = inspectProjectRoot().uri ?? workspace;
+    const picked = await vscode.window.showOpenDialog({
+      title: 'Choose Android project root',
+      defaultUri: current,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: 'Use project root',
+    });
+    const selected = picked?.[0];
+    if (!selected) return;
+    if (!fs.existsSync(gradleWrapperPath(selected))) {
+      await vscode.window.showErrorMessage(`No Gradle wrapper found in ${selected.fsPath}. Choose the directory that contains gradlew.`);
+      return;
+    }
+    const value = projectRootSettingValue(selected.fsPath, workspace?.fsPath);
+    await config().update('projectRoot', value, vscode.ConfigurationTarget.Workspace);
   }
 
   private async refreshConnectedDevices(): Promise<void> {
