@@ -24,10 +24,11 @@ test('saved sections migrate old ids and reset obsolete defaults', () => {
 });
 
 test('Gradle-only actions remain available without Android CLI', () => {
-  assert.deepEqual(buildAvailability(false, true, 1), {run: false, clean: true, sync: true});
-  assert.deepEqual(buildAvailability(true, false, 1), {run: false, clean: true, sync: true});
-  assert.deepEqual(buildAvailability(true, true, 0), {run: false, clean: true, sync: true});
-  assert.deepEqual(buildAvailability(true, true, 2), {run: true, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(false, true, 1, true), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, false, 1, true), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, true, 0, true), {run: false, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, true, 2, true), {run: true, clean: true, sync: true});
+  assert.deepEqual(buildAvailability(true, true, 2, false), {run: false, clean: false, sync: false});
 });
 
 test('route playback requires ADB and an emulator serial', () => {

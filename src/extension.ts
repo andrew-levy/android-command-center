@@ -11,6 +11,7 @@ import {
   isMissingExecutable,
   parseDevices,
   reconcileRunTargetSelection,
+  resolveProjectRootPath,
   summarizeAdb,
   variantFromTask,
   type BuildVariant,
@@ -70,6 +71,9 @@ type DashboardState = {
   initializing?: boolean;
   databaseScanning?: boolean;
   appPackagesScanning?: boolean;
+  projectRoot?: string;
+  projectRootStatus?: 'ready' | 'missing-folder' | 'missing-path' | 'missing-wrapper';
+  projectRootMessage?: string;
   busy?: string;
   error?: string;
   errorExiting?: boolean;
@@ -78,6 +82,13 @@ type DashboardState = {
   linkResult?: LinkResult;
   operation?: Operation;
   testOpenSections?: string[];
+};
+
+type ProjectRootInfo = {
+  uri?: vscode.Uri;
+  displayPath?: string;
+  status: NonNullable<DashboardState['projectRootStatus']>;
+  message?: string;
 };
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -90,6 +101,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('androidCli.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('androidCli.openDashboard', () =>
       vscode.commands.executeCommand('workbench.view.extension.androidCli')),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('androidCli.projectRoot')) void provider.onProjectRootSettingChanged();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void provider.onProjectRootSettingChanged()),
   );
 }
 
@@ -105,6 +120,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private errorSequence = 0;
   private readonly databases: DatabaseInspector;
   private screenshotFile?: vscode.Uri;
+  private lastProjectRootKey?: string;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
@@ -137,6 +153,13 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       initializing: true,
       testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
+    this.applyProjectRootState(inspectProjectRoot(), false);
+  }
+
+  async onProjectRootSettingChanged(): Promise<void> {
+    this.applyProjectRootState(inspectProjectRoot(), true);
+    this.render();
+    await this.refresh(true);
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -184,8 +207,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.cliStatus = 'checking';
     this.state.adbStatus = 'checking';
     this.state.sqliteStatus = 'checking';
+    const project = this.applyProjectRootState(inspectProjectRoot(), false);
     this.render();
-    const root = firstRoot();
+    const root = project.status === 'ready' ? project.uri : undefined;
     const shouldDiscover = Boolean(root && (discoverProject || !this.state.variants.length));
     if (!this.state.variants.length) {
       this.applyVariants([variantFromTask(config().get<string>('gradleTask', 'assembleDebug'))]);
@@ -225,7 +249,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       ? emulators.value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : this.state.emulators;
     await this.updateRunTargets();
     if (!initialLoad && variantDiscovery) await variantDiscovery;
-    if (root) {
+    if (root && project.status === 'ready') {
       try { await this.refreshDeepLinks(root); }
       catch { /* Project metadata is optional and should not block the panel. */ }
     }
@@ -399,7 +423,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   }
 
   private async deploy(variant: BuildVariant, targets: RunTarget[]): Promise<DeployResult> {
-    const files = await findVariantApks(variant);
+    const files = await findVariantApks(requireRoot(), variant);
     if (!files.length) throw new Error(`No APK found for ${variant.label}. Build the variant first.`);
     const picked = files.length === 1 ? files[0] : await vscode.window.showQuickPick(
       files.map((uri) => ({ label: vscode.workspace.asRelativePath(uri), uri })),
@@ -946,6 +970,26 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     return this.context.storageUri ?? vscode.Uri.joinPath(this.context.globalStorageUri, 'workspace-less');
   }
 
+  private applyProjectRootState(info: ProjectRootInfo, invalidateDerived: boolean): ProjectRootInfo {
+    const key = `${info.status}:${info.uri?.fsPath ?? ''}:${config().get<string>('projectRoot', '')}`;
+    const changed = this.lastProjectRootKey !== undefined && this.lastProjectRootKey !== key;
+    this.lastProjectRootKey = key;
+    this.state.projectRoot = info.displayPath;
+    this.state.projectRootStatus = info.status;
+    this.state.projectRootMessage = info.message;
+    if (invalidateDerived || changed) this.clearProjectDerivedState();
+    return info;
+  }
+
+  private clearProjectDerivedState(): void {
+    this.state.variants = [];
+    this.state.deepLinkPrefixes = [];
+    this.state.applicationId = undefined;
+    this.state.selectedVariant = undefined;
+    this.state.linkResult = undefined;
+    void this.context.workspaceState.update(VARIANT_KEY, undefined);
+  }
+
   private persistCache(): void {
     const {
       busy: _busy,
@@ -961,6 +1005,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       databaseScanning: _databaseScanning,
       appPackagesScanning: _appPackagesScanning,
       testOpenSections: _testOpenSections,
+      projectRootMessage: _projectRootMessage,
       runTargets: _runTargets,
       selectedRunTargets: _selectedRunTargets,
       ...cache
@@ -1019,15 +1064,55 @@ function installCliCommand(): string {
   return `curl -fsSL https://dl.google.com/android/cli/latest/${platform}_${architecture}/install.sh | bash`;
 }
 function firstExisting(candidates: string[]): string | undefined { return candidates.find((candidate) => fs.existsSync(candidate)); }
-function firstRoot(): vscode.Uri | undefined { return vscode.workspace.workspaceFolders?.[0]?.uri; }
+function inspectProjectRoot(): ProjectRootInfo {
+  const configured = config().get<string>('projectRoot', '');
+  const folders = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+  const resolved = resolveProjectRootPath(configured, folders);
+  if (resolved.error === 'no-workspace' || !resolved.rootPath) {
+    return {
+      status: 'missing-folder',
+      message: 'Open a folder that contains your Android project, or set androidCli.projectRoot to that directory.',
+    };
+  }
+  if (!fs.existsSync(resolved.rootPath) || !fs.statSync(resolved.rootPath).isDirectory()) {
+    return {
+      status: 'missing-path',
+      displayPath: resolved.displayPath,
+      message: `Project root not found: ${resolved.displayPath}. Update androidCli.projectRoot.`,
+    };
+  }
+  const uri = vscode.Uri.file(resolved.rootPath);
+  const relative = vscode.workspace.asRelativePath(uri, false);
+  const displayPath = configured.trim()
+    ? (path.isAbsolute(configured.trim()) ? relative : resolved.displayPath!)
+    : relative;
+  if (!fs.existsSync(gradleWrapperPath(uri))) {
+    return {
+      uri,
+      displayPath,
+      status: 'missing-wrapper',
+      message: `No Gradle wrapper in ${displayPath}. Set androidCli.projectRoot to the Android project directory that contains gradlew.`,
+    };
+  }
+  return { uri, displayPath, status: 'ready' };
+}
+
+function firstRoot(): vscode.Uri | undefined { return inspectProjectRoot().uri; }
 function requireRoot(): vscode.Uri {
-  const root = firstRoot();
-  if (!root) throw new Error('Open an Android project folder first.');
-  return root;
+  const info = inspectProjectRoot();
+  if (!info.uri || info.status !== 'ready') {
+    throw new Error(info.message ?? 'Open an Android project folder first.');
+  }
+  return info.uri;
+}
+function gradleWrapperPath(root: vscode.Uri): string {
+  return path.join(root.fsPath, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 }
 function gradleWrapper(root: vscode.Uri): string {
-  const wrapper = path.join(root.fsPath, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-  if (!fs.existsSync(wrapper)) throw new Error(`Gradle wrapper not found: ${wrapper}`);
+  const wrapper = gradleWrapperPath(root);
+  if (!fs.existsSync(wrapper)) {
+    throw new Error(`Gradle wrapper not found: ${wrapper}. Set androidCli.projectRoot to your Android project directory.`);
+  }
   return wrapper;
 }
 
@@ -1059,24 +1144,30 @@ async function discoverVariants(root: vscode.Uri): Promise<BuildVariant[]> {
   return [...variants.values()].sort((a, b) => Number(/release$/i.test(a.name)) - Number(/release$/i.test(b.name)) || a.label.localeCompare(b.label));
 }
 
-async function findVariantApks(variant: BuildVariant): Promise<vscode.Uri[]> {
-  const modulePrefix = variant.module ? `${variant.module.replaceAll(':', '/')}/` : '**/';
-  const all = await vscode.workspace.findFiles(`${modulePrefix}build/outputs/apk/**/*.apk`, '**/{node_modules,.gradle}/**', 100);
-  if (!all.length) return vscode.workspace.findFiles(
-    config().get<string>('apkGlob', '**/build/outputs/apk/debug/*.apk'), '**/{node_modules,.gradle}/**', 100,
-  );
+async function findVariantApks(root: vscode.Uri, variant: BuildVariant): Promise<vscode.Uri[]> {
+  const exclude = new vscode.RelativePattern(root, '**/{node_modules,.gradle}/**');
+  const modulePrefix = variant.module ? `${variant.module.replaceAll(':', '/')}/` : '';
+  const apkPattern = modulePrefix
+    ? new vscode.RelativePattern(root, `${modulePrefix}build/outputs/apk/**/*.apk`)
+    : new vscode.RelativePattern(root, '**/build/outputs/apk/**/*.apk');
+  const all = await vscode.workspace.findFiles(apkPattern, exclude, 100);
+  if (!all.length) {
+    const fallback = config().get<string>('apkGlob', '**/build/outputs/apk/debug/*.apk').replace(/^\.?\/+/, '');
+    return vscode.workspace.findFiles(new vscode.RelativePattern(root, fallback), exclude, 100);
+  }
   const wanted = normalize(variant.name);
   const matching = all.filter((uri) => {
-    const relative = normalize(vscode.workspace.asRelativePath(uri));
+    const relative = normalize(path.relative(root.fsPath, uri.fsPath));
     return relative.includes(wanted) && !relative.includes('androidtest');
   });
   return matching.length ? matching : all;
 }
 
 async function discoverDeepLinks(root: vscode.Uri, variant: BuildVariant): Promise<{ prefixes: string[]; applicationId?: string }> {
+  const exclude = new vscode.RelativePattern(root, '**/{node_modules,.gradle}/**');
   const [built, source] = await Promise.all([
-    vscode.workspace.findFiles('**/build/intermediates/**/AndroidManifest.xml', '**/{node_modules,.gradle}/**', 100),
-    vscode.workspace.findFiles('**/src/**/AndroidManifest.xml', '**/{node_modules,.gradle}/**', 100),
+    vscode.workspace.findFiles(new vscode.RelativePattern(root, '**/build/intermediates/**/AndroidManifest.xml'), exclude, 100),
+    vscode.workspace.findFiles(new vscode.RelativePattern(root, '**/src/**/AndroidManifest.xml'), exclude, 100),
   ]);
   const modulePath = variant.module?.replaceAll(':', '/') ?? '';
   const variantName = normalize(variant.name);

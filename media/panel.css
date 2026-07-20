@@ -312,6 +312,18 @@ button[aria-busy="true"] {
 p.muted {
   margin: 0;
 }
+.project-root {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+}
+.project-root-message {
+  margin-top: 8px;
+}
 
 /* ---------- Settings rows: label left, control right ---------- */
 .settings-group {

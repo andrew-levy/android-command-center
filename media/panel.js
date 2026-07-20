@@ -649,6 +649,7 @@ function dependencyRow(name, status, version, message) {
 function buildSection(variants, selected, cliReady, adbReady) {
   const active = variants.find((variant) => variant.id === selected),
     label = active?.label || "Default target";
+  const projectReady = state.projectRootStatus === "ready";
   const selectedIds = new Set(state.selectedRunTargets || []),
     selectedTargets = (state.runTargets || []).filter(
       (target) => target.status === "online" && selectedIds.has(target.id),
@@ -657,6 +658,7 @@ function buildSection(variants, selected, cliReady, adbReady) {
     cliReady,
     adbReady,
     selectedTargets.length,
+    projectReady,
   );
   const options = variants
     .map(
@@ -672,10 +674,30 @@ function buildSection(variants, selected, cliReady, adbReady) {
     .join("");
   const running =
     state.operation?.id === "build-run" && state.operation.status === "running";
-  const body = group(
-    row(
+  const rootLabel = state.projectRoot || "No folder open";
+  const rootHint = projectReady ? "androidCli.projectRoot" : "Set androidCli.projectRoot";
+  const notice =
+    !projectReady && state.projectRootMessage
+      ? '<p class="muted project-root-message">' +
+        esc(state.projectRootMessage) +
+        "</p>"
+      : "";
+  const body =
+    group(
+      row(
+        "Project",
+        '<span class="project-root" title="' +
+          esc(rootLabel) +
+          '">' +
+          esc(rootLabel) +
+          "</span>",
+        "",
+        rootHint,
+      ) +
+      row(
       "Variant",
       selectWrap("build-variant", options, {
+        disabled: !projectReady,
         label: "Build variant",
         title: label,
       }),
@@ -717,8 +739,8 @@ function buildSection(variants, selected, cliReady, adbReady) {
         "Refresh dependencies",
       ),
     "build-settings",
-  );
-  return section("build", "Build", esc(label), body);
+    ) + notice;
+  return section("build", "Build", esc(projectReady ? label : "Needs project"), body);
 }
 
 function runTargetPicker(targets, selectedIds, busy) {

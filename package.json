@@ -88,6 +88,11 @@
           "default": "sqlite3",
           "description": "Path to the SQLite 3 command-line executable used by Database inspection."
         },
+        "androidCli.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Android project directory containing gradlew (or gradlew.bat). Absolute, or relative to the first workspace folder. Leave empty to use the workspace folder itself."
+        },
         "androidCli.gradleTask": {
           "type": "string",
           "default": "assembleDebug",

@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 export type Device = {
   serial: string;
   state: string;
@@ -5,6 +7,30 @@ export type Device = {
   avdName?: string;
   theme?: 'light' | 'dark' | 'auto';
 };
+
+export type ProjectRootResolution = {
+  rootPath?: string;
+  /** Configured value when set, otherwise the workspace folder path. */
+  displayPath?: string;
+  error?: 'no-workspace';
+};
+
+/** Resolve androidCli.projectRoot against the first workspace folder. */
+export function resolveProjectRootPath(
+  configured: string | undefined,
+  workspaceFolderPaths: string[],
+): ProjectRootResolution {
+  const workspace = workspaceFolderPaths[0];
+  if (!workspace) return { error: 'no-workspace' };
+  const trimmed = configured?.trim() ?? '';
+  if (!trimmed) {
+    return { rootPath: path.normalize(workspace), displayPath: workspace };
+  }
+  const rootPath = path.isAbsolute(trimmed)
+    ? path.normalize(trimmed)
+    : path.resolve(workspace, trimmed);
+  return { rootPath, displayPath: trimmed.replace(/\\/g, '/') };
+}
 
 export type RunTarget = {
   id: string;
