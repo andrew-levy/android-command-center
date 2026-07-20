@@ -2,7 +2,7 @@
   "name": "android-cli-panel",
   "displayName": "Android Command Center",
   "description": "Build, run, inspect, and control Android apps without leaving VS Code or Cursor.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "andrew-levy",
   "license": "MIT",
   "icon": "media/marketplace-icon.png",
@@ -121,6 +121,11 @@
           "type": "string",
           "default": "assembleDebug",
           "description": "Default Gradle assemble task used by Run."
+        },
+        "androidCli.activity": {
+          "type": "string",
+          "default": "",
+          "description": "Optional activity class to launch after install. Leave empty to use the selected variant's MAIN/LAUNCHER activity, matching Android Studio's Default Activity behavior."
         },
         "androidCli.apkGlob": {
           "type": "string",

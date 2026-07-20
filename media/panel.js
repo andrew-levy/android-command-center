@@ -50,6 +50,8 @@ const iconShapes={
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
 const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',performance:'performance',database:'database',appdata:'appdata',location:'location',stream:'stream'};
 const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+const performanceMetricFrames=new Map();
+const SHOW_PERFORMANCE=false;
 let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
 let controlsSerial='';
 let openDeviceMenu='';
@@ -83,7 +85,7 @@ const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span clas
 const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':status==='error-exit'?'<span class="action-result error exiting">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
 const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
 const sectionFooter=(message,id,disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null),running=op?.status==='running';return '<div class="section-footer"><span class="section-footer-message">'+esc(message||'')+'</span><button class="section-refresh action-button" data-action="'+id+'" type="button" title="'+esc(op?.message||'Refresh')+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>Refresh</span></button></div>'};
-const ALL_SECTIONS=['build','device','deeplinks','inspector','performance','database','appdata','location','stream','toolchain'];
+const ALL_SECTIONS=['build','device','deeplinks','inspector',...(SHOW_PERFORMANCE?['performance']:[]),'database','appdata','location','stream','toolchain'];
 window.addEventListener('message',({data})=>{
  if(data.type==='state'){
   state=data.state;
@@ -91,6 +93,10 @@ window.addEventListener('message',({data})=>{
   if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];
   if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;
   render();
+ }
+ if(data.type==='performance-state'){
+  state.performance=data.performance;
+  updatePerformanceView();
  }
  if(data.type==='expand-all'){openSections=new Set(ALL_SECTIONS);saveUi();render()}
  if(data.type==='collapse-all'){openSections=new Set();saveUi();render()}
@@ -118,7 +124,7 @@ function render(){
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceSection(devices,avds,cliReady,adbReady));
  const inspector=inspectorSection(cliReady,adbReady,online);
- const performance=performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady);
+ const performance=SHOW_PERFORMANCE?performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady):'';
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device',selectWrap('stream-device',optionsFor(streamSerial),{disabled:!online.length,label:'Logcat device'}),'','Log source')+row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady||!online.length),'','Live Logcat output')));
@@ -166,22 +172,22 @@ function buildSection(variants,selected,cliReady,adbReady){
  const options=variants.map((variant)=>'<option value="'+esc(variant.id)+'"'+(variant.id===selected?' selected':'')+'>'+esc(variant.label)+'</option>').join('');
  const running=state.operation?.id==='build-run'&&state.operation.status==='running';
  const rootLabel=state.projectRoot||'No folder open';
- const rootHint=projectReady?'androidCli.projectRoot':'Set androidCli.projectRoot';
+ const rootHint='Project root';
  const notice=!projectReady&&state.projectRootMessage?'<p class="muted project-root-message">'+esc(state.projectRootMessage)+'</p>':'';
  const body=group(
-  row('Project','<span class="project-root" title="'+esc(rootLabel)+'">'+esc(rootLabel)+'</span>','',rootHint)
-  +row('Variant',selectWrap('build-variant',options,{disabled:!projectReady,label:'Build variant',title:label}),'','Gradle target')
+  row('Variant',selectWrap('build-variant',options,{disabled:!projectReady,label:'Build variant',title:label}),'','Gradle target')
   +row('Run on',runTargetPicker(state.runTargets||[],selectedIds,running),'','Deployment targets')
   +row('Run app',actionButton('build-run','Run','primary compact',!availability.run),'','Build + launch')
   +row('Clean',actionButton('clean','Clean','secondary compact',!availability.clean),'','Remove outputs')
   +row('Gradle Sync',actionButton('gradle-sync','Sync','secondary compact',!availability.sync),'','Refresh dependencies')
+  +row('Project','<span class="project-root-control"><span class="project-root" dir="ltr" title="'+esc(rootLabel)+'">'+esc(rootLabel)+'</span><button class="project-root-settings" type="button" data-setup="project-root-settings" title="Open project root setting" aria-label="Open project root setting">'+icon('settings')+'</button></span>','',rootHint)
  )+notice;
  return section('build','Build',esc(projectReady?label:'Needs project'),body);
 }
 
 function runTargetPicker(targets,selectedIds,busy){
  const active=targets.filter((target)=>target.status==='online'),selected=active.filter((target)=>selectedIds.has(target.id));
- const summary=selected.length?selected.length+' '+(selected.length===1?'target':'targets'):'No active targets';
+ const summary=selected.length===1?selected[0].label:selected.length>1?selected.length+' targets':'No active targets';
  const names=selected.map((target)=>target.label).join(', ')||'Choose deployment targets';
  const options=active.length?runTargetGroup('Active',active,selectedIds,busy):'<div class="run-target-empty">No active devices</div>';
  const note='<div class="run-target-note"><span>Only active devices can be selected.</span><button id="open-devices-from-targets" class="run-target-devices-link" type="button">Devices</button></div>';
@@ -194,19 +200,19 @@ function runTargetGroup(title,targets,selectedIds,busy){
 }
 
 function deviceSection(devices,avds,cliReady,adbReady){
- return '<div class="device-section">'+deviceGrid(devices,avds,adbReady)+emulatorCreateRow(cliReady)+'</div>';
+ return '<div class="device-section">'+deviceGrid(devices,avds,cliReady,adbReady)+'</div>';
 }
 
-function deviceGrid(devices,avds,adbReady){
+function deviceGrid(devices,avds,cliReady,adbReady){
  const operation=state.operation,startingAvdName=operation?.status==='running'&&operation.id?.startsWith('device:')?operation.id.slice(7):'';
  const {avdMatches,connected}=matchAvdDevices(devices,avds,startingAvdName);
  const avdCards=avdMatches.map(({name,device})=>deviceCard({name,device,virtual:true,adbReady}));
  const connectedCards=connected.map((device)=>deviceCard({name:device.description,device,virtual:device.serial.startsWith('emulator-'),adbReady}));
- const cards=[...avdCards,...connectedCards];
- return '<div class="device-grid">'+(cards.length?cards.join(''):'<div class="empty-card dotted"><strong>No devices yet</strong><span>Create an emulator profile to get started.</span></div>')+'</div>';
+ const cards=[...avdCards,...connectedCards,emulatorCreateCard(cliReady)];
+ return '<div class="device-grid">'+cards.join('')+'</div>';
 }
 
-function emulatorCreateRow(cliReady){
+function emulatorCreateCard(cliReady){
  const supported=state.emulatorCreateSupported!==false;
  const ready=canCreateEmulator(cliReady,supported);
  const profiles=state.emulatorProfiles?.length?state.emulatorProfiles:['medium_phone'];
@@ -214,9 +220,7 @@ function emulatorCreateRow(cliReady){
  const options=profiles.map((profile)=>'<option value="'+esc(profile)+'"'+(profile===selected?' selected':'')+'>'+esc(profile.replaceAll('_',' '))+'</option>').join('');
  const hint=!supported?'Unavailable on Windows':!cliReady?'Needs Android CLI':'Choose a device profile';
  const createOp=state.operation?.id==='emulator-create'?state.operation:null;
- return group(
-  row('Create AVD',selectWrap('emulator-profile',options,{disabled:!ready,label:'Emulator profile',title:selected})+actionButton('emulator-create','Create','secondary compact',!ready,createOp?.status==='running'),'',hint)
- );
+ return '<div class="device-card new-device-card"><div class="device-card-head"><span class="device-icon">'+icon('plus')+'</span></div><strong>New Device</strong><span class="device-meta">'+esc(hint)+'</span><div class="new-device-controls">'+selectWrap('emulator-profile',options,{disabled:!ready,label:'Emulator profile',title:selected})+actionButton('emulator-create','Create','secondary compact',!ready,createOp?.status==='running')+'</div></div>';
 }
 
 function overlayToggle(id,label,active,enabled){
@@ -309,44 +313,74 @@ function performanceSection(deviceOptions,adbReady){
  const jankTone=perf.jankPercent!=null&&perf.jankPercent>=5?' warn':'';
  const slowTone=perf.slowFrames!=null&&perf.slowFrames>0?' warn':'';
  const vitals='<div class="perf-vitals">'
-  +'<div class="perf-vital"><strong>'+esc(fps)+'</strong><span>FPS</span></div>'
-  +'<div class="perf-vital'+jankTone+'"><strong>'+esc(jank)+'</strong><span>jank</span></div>'
-  +'<div class="perf-vital"><strong>'+esc(memory)+'</strong><span>MB</span></div>'
-  +'<div class="perf-vital'+slowTone+'"><strong>'+esc(slow)+'</strong><span>slow</span></div>'
+  +'<div class="perf-vital"><strong id="perf-fps" data-metric-value="'+esc(perf.fps??'')+'">'+esc(fps)+'</strong><span>FPS</span></div>'
+  +'<div class="perf-vital'+jankTone+'"><strong id="perf-jank" data-metric-value="'+esc(perf.jankPercent??'')+'">'+esc(jank)+'</strong><span>jank</span></div>'
+  +'<div class="perf-vital"><strong id="perf-memory" data-metric-value="'+esc(perf.memoryMb??'')+'">'+esc(memory)+'</strong><span>MB</span></div>'
+  +'<div class="perf-vital'+slowTone+'"><strong id="perf-slow" data-metric-value="'+esc(perf.slowFrames??'')+'">'+esc(slow)+'</strong><span>slow</span></div>'
   +'</div>';
  const spark=performanceSparkline(perf.frameTimesMs||[]);
  const actions=perf.monitoring
   ?actionButton('performance-stop','Stop','secondary compact')+actionButton('performance-reset','Reset','secondary compact')+actionButton('performance-dump','Dump','secondary compact')
   :actionButton('performance-start','Monitor','primary compact',!ready)+actionButton('performance-reset','Reset','secondary compact',!ready)+actionButton('performance-dump','Dump','secondary compact',!ready);
- const issues=(perf.issues||[]).length
+ const issues='<div id="perf-feedback" class="perf-feedback">'+((perf.issues||[]).length
   ?'<div class="perf-issues"><div class="micro-heading"><span>Issues</span><span>'+perf.issues.length+'</span></div>'+perf.issues.map((item)=>'<div class="perf-issue">'+esc(item)+'</div>').join('')+'</div>'
-  :perf.monitoring?'<p class="muted">Sampling FPS, jank, and memory…</p>':'<p class="muted">Start monitoring to sample FPS, jank, and memory.</p>';
+  :perf.monitoring?'<p class="muted">Sampling FPS, jank, and memory…</p>':'<p class="muted">Start monitoring to sample FPS, jank, and memory.</p>')+'</div>';
  const body=group(
   row('Device',selectWrap('perf-device',deviceOptions,{disabled:!adbReady||perf.monitoring,label:'Performance device'}),'','Sample target')
   +row('Package',selectWrap('perf-package',packageOptions,{disabled:!packages.length||perf.monitoring,label:'Performance package'}),'','App process')
-  +row('Controls','<div class="action-strip perf-actions">'+actions+'</div>','',perf.monitoring?'Live sample':'gfxinfo + meminfo')
- )+vitals+spark+issues+(perf.error?'<div class="location-error">'+esc(perf.error)+'</div>':'');
- return section('performance','Performance',status,body);
+ )+'<div class="perf-toolbar"><span>'+(perf.monitoring?'Live sample':'gfxinfo + meminfo')+'</span><div class="action-strip perf-actions">'+actions+'</div></div>'+vitals+spark+issues+'<div class="location-error perf-error" id="perf-error">'+esc(perf.error||'')+'</div>';
+ return section('performance','Performance','<span id="performance-status">'+status+'</span>',body);
 }
 
 function performanceSparkline(values){
  if(!values.length){
   return '<div class="perf-spark empty dotted" aria-hidden="true"><span>frame time</span></div>';
  }
- const width=240,height=42,pad=3;
- const max=Math.max(20,...values);
- const step=values.length>1?(width-pad*2)/(values.length-1):0;
- const points=values.map((value,index)=>{
-  const x=pad+index*step;
-  const y=height-pad-((Math.min(max,value)/max)*(height-pad*2));
-  return x.toFixed(1)+','+y.toFixed(1);
- }).join(' ');
- const threshold=height-pad-((16.67/max)*(height-pad*2));
+ const {width,height,points,threshold}=performanceSparklineGeometry(values);
  return '<div class="perf-spark" role="img" aria-label="Frame time sparkline">'
   +'<svg viewBox="0 0 '+width+' '+height+'" preserveAspectRatio="none">'
   +'<line class="perf-threshold" x1="0" y1="'+threshold.toFixed(1)+'" x2="'+width+'" y2="'+threshold.toFixed(1)+'"/>'
   +'<polyline class="perf-line" points="'+points+'"/>'
   +'</svg><span>frame time</span></div>';
+}
+
+function performanceSparklineGeometry(values){
+ const width=240,height=42,pad=3,max=Math.max(20,...values);
+ const step=values.length>1?(width-pad*2)/(values.length-1):0;
+ const points=values.map((value,index)=>{const x=pad+index*step,y=height-pad-((Math.min(max,value)/max)*(height-pad*2));return x.toFixed(1)+','+y.toFixed(1)}).join(' ');
+ const threshold=height-pad-((16.67/max)*(height-pad*2));
+ return {width,height,points,threshold};
+}
+
+function updatePerformanceView(){
+ const perf=state.performance||{monitoring:false,frameTimesMs:[],issues:[]};
+ const status=document.getElementById('performance-status');
+ if(status)status.innerHTML=perf.monitoring?'<span class="location-live"><span class="status-dot on"></span>Live</span>':'Ready';
+ animatePerformanceMetric('perf-fps',perf.fps,(value)=>String(Math.round(value)));
+ animatePerformanceMetric('perf-jank',perf.jankPercent,(value)=>Math.round(value)+'%');
+ animatePerformanceMetric('perf-memory',perf.memoryMb,(value)=>String(Math.round(value)));
+ animatePerformanceMetric('perf-slow',perf.slowFrames,(value)=>String(Math.round(value)));
+ document.getElementById('perf-jank')?.closest('.perf-vital')?.classList.toggle('warn',perf.jankPercent!=null&&perf.jankPercent>=5);
+ document.getElementById('perf-slow')?.closest('.perf-vital')?.classList.toggle('warn',perf.slowFrames!=null&&perf.slowFrames>0);
+ const oldSpark=document.querySelector('.perf-spark');
+ const frameTimes=perf.frameTimesMs||[],sparkEmpty=!frameTimes.length;
+ if(oldSpark&&oldSpark.classList.contains('empty')!==sparkEmpty){const shell=document.createElement('div');shell.innerHTML=performanceSparkline(frameTimes);const next=shell.firstElementChild;if(next)oldSpark.replaceWith(next)}
+ else if(oldSpark&&!sparkEmpty){const geometry=performanceSparklineGeometry(frameTimes),threshold=oldSpark.querySelector('.perf-threshold'),line=oldSpark.querySelector('.perf-line');if(threshold){threshold.setAttribute('y1',geometry.threshold.toFixed(1));threshold.setAttribute('y2',geometry.threshold.toFixed(1))}if(line)line.setAttribute('points',geometry.points)}
+ const feedback=document.getElementById('perf-feedback');
+ if(feedback){const nextFeedback=(perf.issues||[]).length?'<div class="perf-issues"><div class="micro-heading"><span>Issues</span><span>'+perf.issues.length+'</span></div>'+perf.issues.map((item)=>'<div class="perf-issue">'+esc(item)+'</div>').join('')+'</div>':'<p class="muted">Sampling FPS, jank, and memory…</p>';if(feedback.innerHTML!==nextFeedback)feedback.innerHTML=nextFeedback}
+ const error=document.getElementById('perf-error');if(error)error.textContent=perf.error||'';
+}
+
+function animatePerformanceMetric(id,next,format){
+ const element=document.getElementById(id);if(!element)return;
+ const activeFrame=performanceMetricFrames.get(id);if(activeFrame)cancelAnimationFrame(activeFrame);
+ const previous=Number.parseFloat(element.textContent),target=Number(next);
+ element.dataset.metricValue=Number.isFinite(target)?String(target):'';
+ if(!Number.isFinite(target)){element.textContent='—';performanceMetricFrames.delete(id);return}
+ if(!Number.isFinite(previous)||matchMedia('(prefers-reduced-motion: reduce)').matches){element.textContent=format(target);performanceMetricFrames.delete(id);return}
+ const start=performance.now(),duration=240,delta=target-previous;
+ const step=(now)=>{const progress=Math.min(1,(now-start)/duration),eased=1-Math.pow(1-progress,3);element.textContent=format(previous+delta*eased);if(progress<1){performanceMetricFrames.set(id,requestAnimationFrame(step))}else{performanceMetricFrames.delete(id)}};
+ performanceMetricFrames.set(id,requestAnimationFrame(step));
 }
 
 function inspectorSection(cliReady,adbReady,online){
@@ -412,11 +446,18 @@ function appDataSection(deviceOptions,adbReady){
   ?packages.map((name)=>'<option value="'+esc(name)+'"'+(name===selected?' selected':'')+'>'+esc(name)+'</option>').join('')
   :(selected?'<option value="'+esc(selected)+'" selected>'+esc(selected)+'</option>':'<option value="">Scan installed apps</option>');
  const disabled=!adbReady||!selected;
- const permissionControls='<div class="permission-actions">'+COMMON_PERMISSIONS.map((item)=>'<button class="chip" data-permission="'+esc(item.permission)+'" data-grant="1"'+(disabled?' disabled':'')+' title="Grant '+esc(item.label)+'">'+esc(item.label)+'</button>').join('')+'</div>';
+ const permissionStateCurrent=state.appPermissionsSerial===state.appPackagesSerial&&state.appPermissionsPackage===selected;
+ const permissions=new Map((permissionStateCurrent?state.appPermissions:[]).map((item)=>[item.permission,item]));
+ const runtimePermissions=COMMON_PERMISSIONS.map((item)=>({item,status:permissions.get(item.permission)})).filter(({status})=>status?.requested&&status?.runtime);
+ const permissionControls=!permissionStateCurrent
+  ?'<span class="permission-empty">Loading…</span>'
+  :runtimePermissions.length
+   ?'<div class="permission-actions" role="group" aria-label="Runtime permissions">'+runtimePermissions.map(({item,status})=>{const active=Boolean(status.granted),title=(active?'Revoke ':'Grant ')+item.label;return '<button class="permission-button'+(active?' active':'')+'" data-permission="'+esc(item.permission)+'" data-grant="'+(active?0:1)+'" aria-label="'+esc(title)+'" aria-pressed="'+active+'"'+(disabled?' disabled':'')+' title="'+esc(title)+'"><span>'+esc(item.label)+'</span><span class="permission-switch" aria-hidden="true"><span></span></span></button>'}).join('')+'</div>'
+   :'<span class="permission-empty">None requested</span>';
  const body=group(
   row('Device',selectWrap('app-device',deviceOptions,{disabled:state.appPackagesScanning,label:'App data device'}),'','Data target')
   +row('Package',selectWrap('app-package',packageOptions,{disabled:!packages.length&&!selected,label:'Installed package'}),'','Installed app ID')
-  +row('Allow',permissionControls,'','Grant common runtime permissions')
+  +row('Permissions',permissionControls,'','Runtime access')
   +row('Force stop',actionButton('app-force-stop','Stop','secondary compact',disabled),'','End app process')
   +row('Clear cache',actionButton('app-clear-cache','Clear','secondary compact',disabled),'','Keep user data')
   +row('Clear storage',actionButton('app-clear-data','Clear','danger compact',disabled),'','Reset app data')

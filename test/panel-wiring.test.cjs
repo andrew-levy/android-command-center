@@ -106,7 +106,10 @@ test('Project root is configurable and refreshes when the setting changes', () =
   assert.match(extension, /onProjectRootSettingChanged/);
   assert.match(extension, /clearProjectDerivedState/);
   assert.match(extension, /new vscode\.RelativePattern\(root,/);
+  assert.match(panel, /const rootHint=['"]Project root['"]/);
   assert.match(panel, /row\(\s*['"]Project['"]/);
+  assert.match(panel, /data-setup="project-root-settings"/);
+  assert.match(extension, /case 'project-root-settings'.*androidCli\.projectRoot/);
   assert.match(panel, /project-root-message/);
 });
 
@@ -127,7 +130,9 @@ test('Run targets are active-only and the picker links to Devices', () => {
   assert.match(panel, /openSections\.add\('device'\).*scrollIntoView/s);
   assert.match(extension, /reconcileRunTargetSelection\(this\.state\.runTargets/);
   assert.doesNotMatch(extension, /prepareRunTargets|RUN_TARGET_READY_TIMEOUT_MS|RUN_TARGET_POLL_MS/);
-  assert.match(extension, /const args = \['run', `--apks=\$\{picked\.fsPath\}`, `--device=\$\{target\.serial\}`\]/);
+  assert.match(extension, /const args = \['run', `--apks=\$\{picked\.fsPath\}`, `--device=\$\{target\.serial\}`, `--activity=\$\{activity\}`\]/);
+  assert.match(extension, /parseManifestLaunchInfo/);
+  assert.match(panel, /selected\.length===1\?selected\[0\]\.label/);
   assert.match(extension, /for \(let index = 0; index < ready\.length; index \+= 1\)/);
   assert.match(extension, /Launched on \$\{result\.launched\.length\} of \$\{result\.total\}/);
   assert.match(panel, /actionButton\('build-run','Run','primary compact'/);
@@ -160,9 +165,10 @@ test('SQLite is configurable and represented in toolchain state', () => {
   assert.match(extension, /run\(sqlite\(\), \['-version'\], undefined, REFRESH_CHECK_TIMEOUT_MS\)/);
 });
 
-test('Devices section uses card gear menus for controls and keeps create inline', () => {
+test('Devices section uses card gear menus and a new-device grid card', () => {
   assert.match(panel, /function deviceSection\(/);
-  assert.match(panel, /emulatorCreateRow\(cliReady\)/);
+  assert.match(panel, /emulatorCreateCard\(cliReady\)/);
+  assert.match(panel, /class="device-card new-device-card"/);
   assert.match(panel, /function deviceSettingsMenu\(/);
   assert.match(panel, /data-device-menu=/);
   assert.match(panel, /device-gear/);
@@ -175,13 +181,18 @@ test('Devices section uses card gear menus for controls and keeps create inline'
   assert.match(extension, /case 'emulator-create': await this\.createEmulator/);
   assert.match(extension, /case 'controls-rotate': await this\.setDeviceRotation/);
   assert.match(extension, /\['emulator', 'create', '--list-profiles'\]/);
+  assert.match(extension, /\['emulator', 'create', selected\]/);
 });
 
 test('App data hosts permission grants with package actions', () => {
-  assert.match(panel, /row\('Allow',permissionControls/);
+  assert.match(panel, /row\('Permissions',permissionControls/);
   assert.match(panel, /data-permission=/);
   assert.match(panel, /function appDataSection/);
+  assert.match(panel, /filter\(\(\{status\}\)=>status\?\.requested&&status\?\.runtime\)/);
+  assert.match(panel, /permission-switch/);
   assert.match(extension, /case 'controls-permission': await this\.setDevicePermission/);
+  assert.match(extension, /parsePackagePermissionStates/);
+  assert.match(panel, /permission-button.*active/);
 });
 
 test('Inspector hosts screen recording beside capture actions', () => {
@@ -191,6 +202,8 @@ test('Inspector hosts screen recording beside capture actions', () => {
   assert.match(extension, /case 'screen-record-stop': await this\.stopScreenRecord/);
   assert.match(extension, /screenrecord/);
   assert.match(extension, /RECORDING_SAVE_DIR_KEY/);
+  assert.match(extension, /waitForScreenRecordProcess/);
+  assert.match(extension, /validateMp4Recording/);
 });
 
 test('View title exposes expand-all and collapse-all controls', () => {
@@ -204,6 +217,8 @@ test('View title exposes expand-all and collapse-all controls', () => {
 });
 
 test('Performance section monitors gfxinfo vitals without becoming a profiler', () => {
+  assert.match(panel, /const SHOW_PERFORMANCE=false/);
+  assert.match(panel, /SHOW_PERFORMANCE\?performanceSection/);
   assert.match(panel, /function performanceSection\(/);
   assert.match(panel, /section\('performance','Performance'/);
   assert.match(panel, /actionButton\('performance-start','Monitor'/);
@@ -212,4 +227,7 @@ test('Performance section monitors gfxinfo vitals without becoming a profiler', 
   assert.match(extension, /dumpsys', 'gfxinfo'/);
   assert.match(extension, /dumpsys', 'meminfo'/);
   assert.match(extension, /parseGfxInfo/);
+  assert.match(extension, /type: 'performance-state'/);
+  assert.match(panel, /updatePerformanceView\(\)/);
+  assert.doesNotMatch(panel, /animatePerformanceElement/);
 });

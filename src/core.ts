@@ -67,6 +67,70 @@ export const COMMON_PERMISSIONS = [
   { id: 'notifications', label: 'Alerts', permission: 'android.permission.POST_NOTIFICATIONS' },
 ] as const;
 
+export type PackagePermissionState = {
+  permission: string;
+  requested: boolean;
+  runtime: boolean;
+  granted: boolean;
+};
+
+export type ManifestLaunchInfo = {
+  applicationId?: string;
+  launchActivity?: string;
+};
+
+/** Resolve the default Android Studio-style launcher component from a manifest. */
+export function parseManifestLaunchInfo(xml: string): ManifestLaunchInfo {
+  const manifestTag = xml.match(/<manifest\b[^>]*>/i)?.[0] ?? '';
+  const applicationId = attrValue(manifestTag, 'package');
+  const componentPattern = /<(activity|activity-alias)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
+  let component: RegExpExecArray | null;
+  while ((component = componentPattern.exec(xml))) {
+    const body = component[3];
+    if (!/<action\b[^>]*android:name\s*=\s*["']android\.intent\.action\.MAIN["'][^>]*>/i.test(body)) continue;
+    if (!/<category\b[^>]*android:name\s*=\s*["']android\.intent\.category\.LAUNCHER["'][^>]*>/i.test(body)) continue;
+    const name = attrValue(component[2], 'name');
+    if (!name || name.includes('${')) continue;
+    return { applicationId, launchActivity: qualifyComponentName(name, applicationId) };
+  }
+  return { applicationId };
+}
+
+export function parsePackagePermissionStates(
+  output: string,
+  permissions: readonly string[] = COMMON_PERMISSIONS.map((item) => item.permission),
+): PackagePermissionState[] {
+  const requested = new Set<string>();
+  const runtime = new Map<string, boolean>();
+  let section = '';
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^requested permissions:$/i.test(line)) {
+      section = 'requested';
+      continue;
+    }
+    if (/^runtime permissions:$/i.test(line)) {
+      section = 'runtime';
+      continue;
+    }
+    if (/^[A-Za-z][^:]*:\s*$/.test(line)) {
+      section = '';
+      continue;
+    }
+    const permission = line.match(/^(android\.permission\.[A-Z0-9_]+)/)?.[1];
+    if (!permission) continue;
+    if (section === 'requested') requested.add(permission);
+    const granted = line.match(/\bgranted=(true|false)\b/i)?.[1];
+    if (section === 'runtime' || granted) runtime.set(permission, granted?.toLowerCase() === 'true');
+  }
+  return permissions.map((permission) => ({
+    permission,
+    requested: requested.has(permission),
+    runtime: runtime.has(permission),
+    granted: runtime.get(permission) ?? false,
+  }));
+}
+
 export function parseEmulatorProfiles(output: string): string[] {
   return unique(
     output
@@ -304,4 +368,15 @@ function targetStatus(device: Device | undefined): RunTarget['status'] {
   if (!device) return 'stopped';
   if (device.state === 'device') return 'online';
   return device.state === 'unauthorized' ? 'unauthorized' : 'offline';
+}
+
+function attrValue(tag: string, name: string): string | undefined {
+  return tag.match(new RegExp(`(?:android:)?${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1];
+}
+
+function qualifyComponentName(name: string, applicationId?: string): string {
+  if (!applicationId || applicationId.includes('${')) return name;
+  if (name.startsWith('.')) return `${applicationId}${name}`;
+  if (!name.includes('.')) return `${applicationId}.${name}`;
+  return name;
 }

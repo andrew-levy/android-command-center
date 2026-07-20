@@ -22,7 +22,7 @@ if(args[0]==='--version'||args[0]==='-V'){
     process.stdout.write('medium_phone\nlarge_phone\nmedium_tablet\nlarge_desktop\n');
   }else{
     const profileArg=args.find((arg)=>arg.startsWith('--profile='));
-    const profile=profileArg?profileArg.slice('--profile='.length):(args[args.indexOf('--profile')+1]||'medium_phone');
+    const profile=profileArg?profileArg.slice('--profile='.length):(args.includes('--profile')?args[args.indexOf('--profile')+1]:args[2])||'medium_phone';
     if(scenario==='command-error')fail(24,`Could not create ${profile}.`);
     process.stdout.write(`Created virtual device ${profile}\n`);
   }

@@ -36,6 +36,17 @@ else{
  else if(command[0]==='shell'&&command[1]==='setprop')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='service'&&command[2]==='call')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='dumpsys'&&command[2]==='battery')process.stdout.write('Current Battery Service state:\n  level: 85\n  status: 2\n  USB powered: true\n');
+ else if(command[0]==='shell'&&command[1]==='dumpsys'&&command[2]==='package')process.stdout.write([
+  'Packages:',
+  '  Package [com.example.androidclitest]',
+  '    requested permissions:',
+  '      android.permission.ACCESS_FINE_LOCATION',
+  '      android.permission.CAMERA',
+  '    runtime permissions:',
+  '      android.permission.ACCESS_FINE_LOCATION: granted=true, flags=[ USER_SET ]',
+  '      android.permission.CAMERA: granted=false, flags=[ ]',
+  '',
+ ].join('\n'));
  else if(command[0]==='shell'&&command[1]==='pm'&&command[2]==='grant')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='pm'&&command[2]==='revoke')process.stdout.write('');
  else if(command[0]==='shell'&&command[1]==='pm'&&command[2]==='list')process.stdout.write('package:com.example.androidclitest\npackage:com.example.other\n');

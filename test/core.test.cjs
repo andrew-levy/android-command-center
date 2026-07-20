@@ -14,6 +14,8 @@ const {
   parseEmulatorProfiles,
   parseGfxInfo,
   parseMemInfo,
+  parseManifestLaunchInfo,
+  parsePackagePermissionStates,
   reconcileRunTargetSelection,
   resolveProjectRootPath,
   summarizeAdb,
@@ -115,6 +117,47 @@ test('emulator profile parsing keeps clean profile ids', () => {
   );
   assert.equal(emulatorCreateSupported('darwin'), true);
   assert.equal(emulatorCreateSupported('win32'), false);
+});
+
+test('manifest launch parsing resolves the Android Studio default activity', () => {
+  assert.deepEqual(parseManifestLaunchInfo(`
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.minimal">
+      <application>
+        <activity android:name=".MainActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+          </intent-filter>
+        </activity>
+      </application>
+    </manifest>
+  `), {
+    applicationId: 'com.example.minimal',
+    launchActivity: 'com.example.minimal.MainActivity',
+  });
+});
+
+test('package permission parsing distinguishes requested, runtime, and granted states', () => {
+  const states = parsePackagePermissionStates(`
+    requested permissions:
+      android.permission.ACCESS_FINE_LOCATION
+      android.permission.CAMERA
+      android.permission.INTERNET
+    install permissions:
+      android.permission.INTERNET: granted=true
+    runtime permissions:
+      android.permission.ACCESS_FINE_LOCATION: granted=true, flags=[ USER_SET ]
+      android.permission.CAMERA: granted=false, flags=[ ]
+  `, [
+    'android.permission.ACCESS_FINE_LOCATION',
+    'android.permission.CAMERA',
+    'android.permission.RECORD_AUDIO',
+  ]);
+  assert.deepEqual(states, [
+    {permission: 'android.permission.ACCESS_FINE_LOCATION', requested: true, runtime: true, granted: true},
+    {permission: 'android.permission.CAMERA', requested: true, runtime: true, granted: false},
+    {permission: 'android.permission.RECORD_AUDIO', requested: false, runtime: false, granted: false},
+  ]);
 });
 
 test('device control helpers normalize font scale and battery dumps', () => {

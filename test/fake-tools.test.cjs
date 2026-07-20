@@ -19,7 +19,7 @@ test('fake Android CLI can represent healthy and partial setup states', () => {
   assert.equal(run(android,['--version'],'cli-error').status,22);
   assert.equal(run(android,['emulator','list'],'no-emulators').stdout,'');
   assert.match(run(android,['emulator','create','--list-profiles']).stdout,/medium_phone/);
-  assert.match(run(android,['emulator','create','--profile=medium_phone']).stdout,/Created virtual device medium_phone/);
+  assert.match(run(android,['emulator','create','medium_phone']).stdout,/Created virtual device medium_phone/);
 });
 
 test('fake ADB exposes deterministic device edge states', () => {

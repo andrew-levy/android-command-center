@@ -18,6 +18,8 @@ import {
   parseEmulatorProfiles,
   parseGfxInfo,
   parseMemInfo,
+  parseManifestLaunchInfo,
+  parsePackagePermissionStates,
   parseSettingsFloat,
   parseSettingsInt,
   reconcileRunTargetSelection,
@@ -28,6 +30,7 @@ import {
   type Device,
   type DeviceControls,
   type PerformanceMetrics,
+  type PackagePermissionState,
   type RunTarget,
 } from './core';
 
@@ -98,10 +101,14 @@ type DashboardState = {
   recentDeepLinks: string[];
   favoriteDeepLinks: string[];
   applicationId?: string;
+  launchActivity?: string;
   database: DatabaseInspectorState;
   appPackages: string[];
   appPackagesSerial?: string;
   selectedAppPackage?: string;
+  appPermissions: PackagePermissionState[];
+  appPermissionsSerial?: string;
+  appPermissionsPackage?: string;
   appDataMessage?: string;
   initializing?: boolean;
   databaseScanning?: boolean;
@@ -197,6 +204,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       appPackages: cached?.appPackages ?? [],
       appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
+      appPermissions: [],
       performance: {
         serial: cached?.performance?.serial,
         packageName: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
@@ -370,6 +378,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'dependency-choose-adb': await this.chooseExecutable('adbExecutable', 'Choose the adb executable'); return;
         case 'dependency-choose-sqlite': await this.chooseExecutable('sqliteExecutable', 'Choose the sqlite3 executable'); return;
         case 'dependency-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'Android Command Center'); return;
+        case 'project-root-settings': await vscode.commands.executeCommand('workbench.action.openSettings', 'androidCli.projectRoot'); return;
         case 'error-dismiss': this.clearError(); return;
         case 'variant': await this.selectVariant(String(message.id)); return;
         case 'run-targets': await this.selectRunTargets(Array.isArray(message.ids) ? message.ids.map(String) : []); return;
@@ -525,6 +534,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       { placeHolder: `Choose a ${variant.label} APK to deploy` },
     ).then((x) => x?.uri);
     if (!picked) throw new UserCancelledError();
+    const activity = config().get<string>('activity', '').trim() || this.state.launchActivity;
+    if (!activity) {
+      throw new Error('No MAIN/LAUNCHER activity was found for this variant. Set androidCli.activity to the activity used by your Android Studio run configuration.');
+    }
     const failures: DeployFailure[] = [];
     await this.refreshConnectedDevices().catch(() => undefined);
     const ready = targets.flatMap((target) => {
@@ -537,7 +550,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (ready.length) this.setBusyLabel('build-run', 'Launching…');
     for (let index = 0; index < ready.length; index += 1) {
       const target = ready[index];
-      const args = ['run', `--apks=${picked.fsPath}`, `--device=${target.serial}`];
+      const args = ['run', `--apks=${picked.fsPath}`, `--device=${target.serial}`, `--activity=${activity}`];
       const name = `Android Run · ${target.label}`;
       if (await this.runProcessTask(name, cli(), args, undefined, `android-run:${target.id}`)) {
         launched.push(target);
@@ -590,6 +603,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     const configured = config().get<string[]>('deepLinkPrefixes', []);
     this.state.deepLinkPrefixes = unique([...configured, ...discovered.prefixes]);
     this.state.applicationId = discovered.applicationId;
+    this.state.launchActivity = discovered.launchActivity;
     if (discovered.applicationId && !this.state.selectedAppPackage) {
       this.state.selectedAppPackage = discovered.applicationId;
       await this.context.workspaceState.update(APP_PACKAGE_KEY, discovered.applicationId);
@@ -630,7 +644,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.selectedEmulatorProfile = selected;
     await this.busy(
       `Creating ${selected}…`,
-      () => run(cli(), ['emulator', 'create', `--profile=${selected}`], undefined, 300_000),
+      () => run(cli(), ['emulator', 'create', selected], undefined, 300_000),
       'emulator-create',
       `${selected} created`,
     );
@@ -755,11 +769,27 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     const target = this.requireOnlineSerial(serial);
     const pkg = packageName.trim() || this.state.selectedAppPackage || this.state.applicationId;
     if (!pkg) throw new Error('Choose a package for permission changes.');
-    const known = COMMON_PERMISSIONS.some((item) => item.permission === permission);
-    if (!known) throw new Error('Choose a supported permission.');
+    const definition = COMMON_PERMISSIONS.find((item) => item.permission === permission);
+    if (!definition) throw new Error('Choose a supported permission.');
+    const permissions = await this.loadAppPermissions(target, pkg);
+    const status = permissions.find((item) => item.permission === permission);
+    if (!status?.requested) {
+      throw new Error(`${pkg} does not request ${definition.label} in its manifest, so Android cannot grant it.`);
+    }
+    if (!status.runtime) {
+      throw new Error(`${definition.label} is not a runtime permission for this app on the selected device.`);
+    }
+    if (status.granted === grant) {
+      this.state.appDataMessage = `${definition.label} is already ${grant ? 'allowed' : 'revoked'}`;
+      this.render();
+      return;
+    }
     await this.busy(grant ? `Granting permission…` : `Revoking permission…`, () =>
       run(adb(), ['-s', target, 'shell', 'pm', grant ? 'grant' : 'revoke', pkg, permission]),
     'controls-permission', grant ? 'Permission granted' : 'Permission revoked');
+    await this.loadAppPermissions(target, pkg);
+    this.state.appDataMessage = `${definition.label} ${grant ? 'allowed' : 'revoked'}`;
+    this.render();
   }
 
   private requireOnlineSerial(serial: string): string {
@@ -801,8 +831,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     }
     await this.busy('Stopping recording…', async () => {
       await run(adb(), ['-s', serial, 'shell', 'pkill', '-2', 'screenrecord']).catch(() => undefined);
-      await this.stopScreenRecordProcess();
-      await new Promise<void>((resolve) => setTimeout(resolve, 700));
+      await this.waitForScreenRecordProcess();
       if (!save) {
         await run(adb(), ['-s', serial, 'shell', 'rm', '-f', SCREEN_RECORD_REMOTE]).catch(() => undefined);
         return;
@@ -812,6 +841,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       const local = vscode.Uri.joinPath(folder, recordingFilename());
       await run(adb(), ['-s', serial, 'pull', SCREEN_RECORD_REMOTE, local.fsPath], undefined, 60_000);
       await run(adb(), ['-s', serial, 'shell', 'rm', '-f', SCREEN_RECORD_REMOTE]).catch(() => undefined);
+      await validateMp4Recording(local.fsPath);
       const defaultUri = this.defaultRecordingSaveUri(path.basename(local.fsPath));
       const target = await vscode.window.showSaveDialog({
         title: 'Save screen recording',
@@ -837,6 +867,30 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.screenRecordProcess = undefined;
     if (!child || child.killed) return;
     try { child.kill('SIGTERM'); } catch { /* Process may already be gone. */ }
+  }
+
+  private async waitForScreenRecordProcess(): Promise<void> {
+    const child = this.screenRecordProcess;
+    if (!child || child.exitCode !== null) {
+      this.screenRecordProcess = undefined;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off('exit', finish);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try { child.kill('SIGTERM'); } catch { /* Process may already be gone. */ }
+        finish();
+      }, 5_000);
+      child.once('exit', finish);
+    });
+    if (this.screenRecordProcess === child) this.screenRecordProcess = undefined;
   }
 
   private defaultRecordingSaveUri(filename: string): vscode.Uri {
@@ -1061,6 +1115,13 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.appDataMessage = packages.length
       ? `${packages.length} installed app${packages.length === 1 ? '' : 's'}`
       : 'No third-party packages found';
+    if (this.state.selectedAppPackage) {
+      await this.loadAppPermissions(serial, this.state.selectedAppPackage).catch(() => {
+        this.state.appPermissions = [];
+        this.state.appPermissionsSerial = serial;
+        this.state.appPermissionsPackage = this.state.selectedAppPackage;
+      });
+    }
     this.persistCache();
   }
 
@@ -1070,9 +1131,21 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.selectedAppPackage = trimmed;
     this.state.appDataMessage = undefined;
     this.state.performance = { ...this.state.performance, packageName: trimmed };
+    this.state.appPermissions = [];
+    const serial = this.state.appPackagesSerial;
+    if (serial) await this.loadAppPermissions(serial, trimmed).catch(() => undefined);
     await this.context.workspaceState.update(APP_PACKAGE_KEY, trimmed);
     this.persistCache();
     this.render();
+  }
+
+  private async loadAppPermissions(serial: string, packageName: string): Promise<PackagePermissionState[]> {
+    const output = await run(adb(), ['-s', serial, 'shell', 'dumpsys', 'package', packageName], undefined, 8_000);
+    const permissions = parsePackagePermissionStates(output);
+    this.state.appPermissions = permissions;
+    this.state.appPermissionsSerial = serial;
+    this.state.appPermissionsPackage = packageName;
+    return permissions;
   }
 
   private async clearAppCache(serialHint: string, packageHint: string): Promise<void> {
@@ -1314,6 +1387,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.state.variants = [];
     this.state.deepLinkPrefixes = [];
     this.state.applicationId = undefined;
+    this.state.launchActivity = undefined;
     this.state.selectedVariant = undefined;
     this.state.linkResult = undefined;
     void this.context.workspaceState.update(VARIANT_KEY, undefined);
@@ -1396,14 +1470,14 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         error: undefined,
         updatedAt: Date.now(),
       };
-      this.render();
+      this.postPerformanceState();
     } catch (error) {
       this.state.performance = {
         ...this.state.performance,
         error: messageOf(error),
         issues: [],
       };
-      this.render();
+      this.postPerformanceState();
     } finally {
       this.performanceSampling = false;
     }
@@ -1466,6 +1540,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       operation: _operation,
       database: _database,
       appDataMessage: _appDataMessage,
+      appPermissions: _appPermissions,
+      appPermissionsSerial: _appPermissionsSerial,
+      appPermissionsPackage: _appPermissionsPackage,
       initializing: _initializing,
       databaseScanning: _databaseScanning,
       appPackagesScanning: _appPackagesScanning,
@@ -1492,6 +1569,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   }
 
   private render(): void { void this.view?.webview.postMessage({ type: 'state', state: this.state }); }
+  private postPerformanceState(): void {
+    void this.view?.webview.postMessage({ type: 'performance-state', performance: this.state.performance });
+  }
 }
 
 function screenshotFilename(annotate: boolean): string {
@@ -1502,6 +1582,46 @@ function screenshotFilename(annotate: boolean): string {
 function recordingFilename(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   return `record-${timestamp}.mp4`;
+}
+
+async function validateMp4Recording(filename: string): Promise<void> {
+  const file = await fs.promises.open(filename, 'r');
+  let valid = false;
+  try {
+    const { size } = await file.stat();
+    let offset = 0;
+    let hasFileType = false;
+    let hasMovieMetadata = false;
+    const header = Buffer.alloc(16);
+    while (size >= 1024 && offset + 8 <= size) {
+      header.fill(0);
+      const { bytesRead } = await file.read(header, 0, 16, offset);
+      if (bytesRead < 8) break;
+      let boxSize = header.readUInt32BE(0);
+      const boxType = header.subarray(4, 8).toString('ascii');
+      let headerSize = 8;
+      if (boxSize === 1) {
+        if (bytesRead < 16) break;
+        const extendedSize = header.readBigUInt64BE(8);
+        if (extendedSize > BigInt(Number.MAX_SAFE_INTEGER)) break;
+        boxSize = Number(extendedSize);
+        headerSize = 16;
+      } else if (boxSize === 0) {
+        boxSize = size - offset;
+      }
+      if (boxSize < headerSize || offset + boxSize > size) break;
+      hasFileType ||= boxType === 'ftyp';
+      hasMovieMetadata ||= boxType === 'moov';
+      offset += boxSize;
+    }
+    valid = hasFileType && hasMovieMetadata;
+  } finally {
+    await file.close();
+  }
+  if (!valid) {
+    await fs.promises.rm(filename, { force: true });
+    throw new Error('Android did not finish the screen recording. Record for at least one second, then try again.');
+  }
 }
 
 function uriDirectory(uri: vscode.Uri): vscode.Uri {
@@ -1646,7 +1766,7 @@ async function findVariantApks(root: vscode.Uri, variant: BuildVariant): Promise
   return matching.length ? matching : all;
 }
 
-async function discoverDeepLinks(root: vscode.Uri, variant: BuildVariant): Promise<{ prefixes: string[]; applicationId?: string }> {
+async function discoverDeepLinks(root: vscode.Uri, variant: BuildVariant): Promise<{ prefixes: string[]; applicationId?: string; launchActivity?: string }> {
   const exclude = new vscode.RelativePattern(root, '**/{node_modules,.gradle}/**');
   const [built, source] = await Promise.all([
     vscode.workspace.findFiles(new vscode.RelativePattern(root, '**/build/intermediates/**/AndroidManifest.xml'), exclude, 100),
@@ -1656,12 +1776,15 @@ async function discoverDeepLinks(root: vscode.Uri, variant: BuildVariant): Promi
   const variantName = normalize(variant.name);
   const files = [...built, ...source].sort((a, b) => manifestScore(b, modulePath, variantName) - manifestScore(a, modulePath, variantName));
   let applicationId: string | undefined;
+  let launchActivity: string | undefined;
   const prefixes = new Set<string>();
   for (const uri of files.slice(0, 12)) {
     let xml: string;
     try { xml = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8'); }
     catch { continue; }
-    applicationId ??= xml.match(/<manifest[^>]*\bpackage\s*=\s*"([^"]+)"/)?.[1];
+    const launchInfo = parseManifestLaunchInfo(xml);
+    applicationId ??= launchInfo.applicationId;
+    launchActivity ??= launchInfo.launchActivity;
     for (const filter of xml.match(/<intent-filter\b[\s\S]*?<\/intent-filter>/g) ?? []) {
       if (!filter.includes('android.intent.action.VIEW')) continue;
       const dataTags = filter.match(/<data\b[^>]*>/g) ?? [];
@@ -1678,9 +1801,9 @@ async function discoverDeepLinks(root: vscode.Uri, variant: BuildVariant): Promi
         }
       }
     }
-    if (prefixes.size && uri.fsPath.includes(`${path.sep}build${path.sep}intermediates${path.sep}`)) break;
+    if (prefixes.size && launchActivity && uri.fsPath.includes(`${path.sep}build${path.sep}intermediates${path.sep}`)) break;
   }
-  return { prefixes: [...prefixes].sort(), applicationId };
+  return { prefixes: [...prefixes].sort(), applicationId, launchActivity };
 }
 
 function manifestScore(uri: vscode.Uri, modulePath: string, variant: string): number {
