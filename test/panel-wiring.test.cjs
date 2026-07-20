@@ -19,12 +19,33 @@ test('Panel rerenders preserve page and nested scroll positions', () => {
   assert.match(panel, /restoreScrollState\(scrollState\)/);
   assert.match(panel, /data-preserve-scroll="deeplink-prefixes"/);
   assert.match(panel, /data-preserve-scroll="database-result"/);
+  assert.match(panel, /data-preserve-scroll="run-target-menu"/);
   assert.match(panel, /data-preserve-scroll="toolchain"/);
 });
 
 test('Database renders a reachable refresh action and targets the selected database device', () => {
-  assert.match(panel, /actionButton\('db-refresh','Refresh'/);
+  assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
   assert.match(panel, /action==='db-refresh'\)send\('db-refresh',\{serial:document\.getElementById\('db-device'\)\?\.value\|\|''\}\)/);
+});
+
+test('App data and Database refresh actions share bottom footers with their status messages', () => {
+  assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
+  assert.match(panel, /sectionFooter\(state\.appDataMessage,'app-packages'/);
+  assert.match(panel, /class="section-footer"/);
+  assert.match(panel, /class="section-footer-message"/);
+  assert.match(panel, /class="section-refresh action-button"/);
+  assert.match(panel, /<span>Refresh<\/span>/);
+  assert.doesNotMatch(panel, /row\('Refresh'/);
+  assert.doesNotMatch(panel, /section-body-action/);
+});
+
+test('Failed action icons and error toasts exit after a timed hold', () => {
+  assert.match(panel, /status==='error-exit'/);
+  assert.match(panel, /state\.errorExiting\?' exiting':''/);
+  assert.match(extension, /status: 'error-exit'/);
+  assert.match(extension, /this\.showOperationError\(id, messageOf\(error\)\)/);
+  assert.match(extension, /ERROR_HOLD_MS/);
+  assert.match(extension, /this\.state\.errorExiting = true/);
 });
 
 test('Initial load renders the real UI with a loading toast instead of a skeleton', () => {
@@ -60,14 +81,14 @@ test('Screenshots preview privately before the user chooses a save destination',
   assert.match(panel, /action==='screenshot-save'\)send\('screenshot-save'\)/);
 });
 
-test('Database renders one result message instead of repeating the row count', () => {
-  assert.match(panel, /databaseResult\(db\.result,db\.selectedTable,db\.message\)/);
-  assert.match(panel, /const resultMessage=message\|\|result\.message\|\|\(rows\.length\+' row\(s\)'\)/);
-  assert.doesNotMatch(panel, /\+\(db\.message\?'<div class="db-message">'/);
+test('Database renders one result message in its footer instead of repeating the row count', () => {
+  assert.match(panel, /const footerMessage=db\.result\?\(db\.message\|\|db\.result\.message/);
+  assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
+  assert.doesNotMatch(panel, /class="db-result-meta"/);
 });
 
 test('Clean and Sync use Gradle-only availability while Run still requires Android CLI', () => {
-  assert.match(panel, /const availability=buildAvailability\(cliReady\)/);
+  assert.match(panel, /const availability=buildAvailability\(cliReady,adbReady,selectedTargets\.length\)/);
   assert.match(panel, /actionButton\('clean','Clean','secondary compact',!availability\.clean\)/);
   assert.match(panel, /actionButton\('clean'.*actionButton\('gradle-sync'/s);
   assert.doesNotMatch(panel, /actionButton\('build','Build'/);
@@ -75,6 +96,39 @@ test('Clean and Sync use Gradle-only availability while Run still requires Andro
   assert.match(panel, /actionButton\('gradle-sync','Sync','secondary compact',!availability\.sync\)/);
   assert.match(extension, /case 'gradle-sync': await this\.gradleSync\(\); return;/);
   assert.match(extension, /\['help', '--refresh-dependencies', '--console=plain'\]/);
+});
+
+test('Build exposes a persisted multi-target dropdown before Run', () => {
+  assert.match(panel, /row\('Run on',runTargetPicker/);
+  assert.match(panel, /row\('Run on'.*row\('Run app'/s);
+  assert.match(panel, /class="run-target-checkbox" type="checkbox"/);
+  assert.match(panel, /send\('run-targets',\{ids:state\.selectedRunTargets\}\)/);
+  assert.match(panel, /runTargetMenuOpen=Boolean\(savedUi\.runTargetMenuOpen\)/);
+  assert.match(extension, /RUN_TARGETS_KEY = 'androidCli\.selectedRunTargets\.v1'/);
+  assert.match(extension, /case 'run-targets': await this\.selectRunTargets/);
+});
+
+test('Run targets are active-only and the picker links to Devices', () => {
+  assert.match(panel, /const active=targets\.filter\(\(target\)=>target\.status==='online'\)/);
+  assert.match(panel, /Only active devices can be selected\./);
+  assert.match(panel, /id="open-devices-from-targets"/);
+  assert.match(panel, /openSections\.add\('device'\).*scrollIntoView/s);
+  assert.match(extension, /reconcileRunTargetSelection\(this\.state\.runTargets/);
+  assert.doesNotMatch(extension, /prepareRunTargets|RUN_TARGET_READY_TIMEOUT_MS|RUN_TARGET_POLL_MS/);
+  assert.match(extension, /const args = \['run', `--apks=\$\{picked\.fsPath\}`, `--device=\$\{target\.serial\}`\]/);
+  assert.match(extension, /for \(let index = 0; index < ready\.length; index \+= 1\)/);
+  assert.match(extension, /Launched on \$\{result\.launched\.length\} of \$\{result\.total\}/);
+  assert.match(panel, /actionButton\('build-run','Run','primary compact'/);
+  assert.doesNotMatch(panel, /runLabel/);
+});
+
+test('Stream selects and explicitly targets an online Logcat device', () => {
+  assert.match(panel, /selectWrap\(\s*["']stream-device["'],\s*optionsFor\(streamSerial\)/);
+  assert.match(panel, /let streamSerial = savedUi\.streamSerial \|\| ["']["']/);
+  assert.match(panel, /streamSerial = e\.target\.value;\s*saveUi\(\)/);
+  assert.match(panel, /action === ["']logcat["']\)\s*send\(["']logcat["'], \{\s*serial: document\.getElementById\(["']stream-device["']\)\?\.value \|\| ["']["'],\s*\}\)/);
+  assert.match(extension, /this\.terminal\('Logcat', \[adb\(\), '-s', serial, 'logcat'\]\)/);
+  assert.doesNotMatch(extension, /\.\.\.\(message\.serial \? \['-s'/);
 });
 
 test('Route playback requires a selected emulator in the live panel', () => {

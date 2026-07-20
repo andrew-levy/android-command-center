@@ -91,7 +91,7 @@ The test app should retain its own unit and instrumented UI tests, but those tes
 Happy paths:
 
 - Discover every intended variant and preserve the selected variant after rerender/reload.
-- Run and verify build, install, launch, selected package, selected device, and local success animation.
+- Start required AVDs in Devices, select multiple active targets, verify selection persistence, then confirm one build and per-target install/launch.
 - Clean and verify build outputs are removed.
 - Run Gradle Sync and verify the wrapper executes `help --refresh-dependencies --console=plain` in its dedicated terminal.
 
@@ -100,7 +100,7 @@ Edge paths:
 - no workspace folder; non-Android folder; missing/non-executable Gradle wrapper;
 - Gradle compile failure and Gradle process cancellation;
 - Android CLI missing while Gradle is healthy;
-- no online device, multiple devices, and device-picker cancellation;
+- no active target, offline/unauthorized devices excluded from the picker, a device going offline after selection, and partial multi-target launch failure;
 - zero APKs, multiple matching APKs, and APK-picker cancellation;
 - device disconnect after build but before install;
 - repeated click while running and fast task completion.

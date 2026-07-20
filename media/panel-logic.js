@@ -15,13 +15,29 @@
   return savedUi?.uiVersion===currentVersion?migrated:(migrated?.filter((id)=>id!=='device'&&id!=='toolchain')||['build']);
  }
 
- function buildAvailability(cliReady){
-  return {run:cliReady,clean:true,sync:true};
+ function buildAvailability(cliReady,adbReady=true,targetCount=1){
+  return {run:Boolean(cliReady&&adbReady&&targetCount>0),clean:true,sync:true};
  }
 
  function canPlayRoute(adbReady,serial){
   return Boolean(adbReady&&String(serial||'').startsWith('emulator-'));
  }
 
- return {parseCoords,restoreOpenSections,buildAvailability,canPlayRoute};
+ function matchAvdDevices(devices,avds,startingAvdName){
+  const remaining=[...(devices||[])];
+  const avdMatches=(avds||[]).map((name)=>{
+   let index=remaining.findIndex((device)=>device.avdName===name);
+   if(index<0&&name===startingAvdName){
+    const candidates=remaining
+     .map((device,candidateIndex)=>({device,candidateIndex}))
+     .filter(({device})=>!device.avdName&&String(device.serial||'').startsWith('emulator-'));
+    if(candidates.length===1)index=candidates[0].candidateIndex;
+   }
+   const device=index<0?undefined:remaining.splice(index,1)[0];
+   return {name,device};
+  });
+  return {avdMatches,connected:remaining};
+ }
+
+ return {parseCoords,restoreOpenSections,buildAvailability,canPlayRoute,matchAvdDevices};
 });

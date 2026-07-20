@@ -49,6 +49,7 @@
   --radius-control: 7px;
   --control-height: 30px;
   --toolchain-footer-height: 45px;
+  --content-max-width: 1200px;
   font-family: var(--mono);
 }
 
@@ -77,7 +78,8 @@ button {
   color: inherit;
 }
 main {
-  width: 100%;
+  width: min(100%, var(--content-max-width));
+  margin: 0 auto;
   padding: 0 0 var(--toolchain-footer-height);
 }
 
@@ -241,6 +243,11 @@ button[aria-busy="true"] {
 }
 .action-result.error {
   color: var(--danger);
+  transform-origin: center;
+  animation: success-in 180ms 40ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+.action-result.error.exiting {
+  animation: success-out 180ms ease-in both;
 }
 .action-button {
   display: inline-flex;
@@ -265,7 +272,8 @@ button[aria-busy="true"] {
   height: 12px;
 }
 .action-icon-slot.success > .ui-icon,
-.action-icon-slot.error > .ui-icon {
+.action-icon-slot.error > .ui-icon,
+.action-icon-slot.error-exit > .ui-icon {
   opacity: 0;
   transform: scale(0.72);
 }
@@ -281,6 +289,9 @@ button[aria-busy="true"] {
   animation: spinner-complete 180ms ease-in both;
 }
 .action-icon-slot.success-exit > .ui-icon {
+  animation: action-icon-return 180ms ease-out both;
+}
+.action-icon-slot.error-exit > .ui-icon {
   animation: action-icon-return 180ms ease-out both;
 }
 .ui-icon {
@@ -414,6 +425,155 @@ select option {
   color: var(--vscode-dropdown-foreground, var(--text));
 }
 
+.settings-group.build-settings {
+  position: relative;
+  overflow: visible;
+}
+.run-target-picker {
+  position: relative;
+  z-index: 4;
+}
+.run-target-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 126px;
+  max-width: 210px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--hover);
+  color: var(--text);
+  cursor: pointer;
+}
+.run-target-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-target-trigger:hover,
+.run-target-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+}
+.run-target-trigger .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+.picker-chevron {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+.run-target-trigger[aria-expanded="true"] .picker-chevron {
+  transform: rotate(180deg);
+}
+.run-target-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  width: min(276px, calc(100vw - 48px));
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--vscode-dropdown-background, var(--deep));
+  color: var(--vscode-dropdown-foreground, var(--text));
+  box-shadow: 0 8px 22px var(--shadow);
+}
+.run-target-menu[hidden] {
+  display: none;
+}
+.run-target-group + .run-target-group {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+}
+.run-target-group-title {
+  padding: 2px 7px 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.run-target-option {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.run-target-option:hover {
+  background: var(--hover);
+}
+.run-target-option.disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+.run-target-checkbox {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--text);
+}
+.run-target-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.run-target-copy strong,
+.run-target-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-target-copy strong {
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.run-target-copy > span {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.run-target-empty {
+  padding: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+.run-target-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  padding: 7px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+}
+.run-target-devices-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.run-target-devices-link:hover {
+  text-decoration: underline;
+}
+
 .row-input {
   flex: 1 1 auto;
   min-width: 96px;
@@ -478,7 +638,7 @@ details.toolchain[open]::details-content {
 summary {
   list-style: none;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) auto;
   align-items: center;
   gap: 8px;
   min-height: 40px;
@@ -507,6 +667,12 @@ summary::-webkit-details-marker {
   height: 13px;
   stroke-width: 1.8;
 }
+.section-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 summary:hover .section-title {
   color: var(--text);
 }
@@ -518,6 +684,41 @@ summary:hover .section-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.section-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.section-footer-message {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 10px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section-refresh {
+  flex: 0 0 auto;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+.section-refresh:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.section-refresh:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 .chevron {
   flex: 0 0 auto;
@@ -563,6 +764,14 @@ details.toolchain[open] .section-body {
 details.toolchain summary {
   grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   min-height: 36px;
+  max-width: var(--content-max-width);
+  margin-right: auto;
+  margin-left: auto;
+}
+details.toolchain > .section-body {
+  width: min(100%, calc(var(--content-max-width) - 24px));
+  margin-right: auto;
+  margin-left: auto;
 }
 .toolchain-icon {
   width: 13px;
@@ -1257,11 +1466,6 @@ textarea#db-sql:focus {
   flex-direction: column;
   gap: 6px;
 }
-.db-result-meta {
-  color: var(--muted);
-  font-size: 10px;
-  font-family: var(--mono);
-}
 .db-table-wrap {
   overflow: auto;
   max-height: 240px;
@@ -1306,13 +1510,6 @@ textarea#db-sql:focus {
 }
 .db-editable:hover {
   background: var(--hover);
-}
-
-/* ---------- App data ---------- */
-.app-data-message {
-  color: var(--muted);
-  font-size: 10px;
-  font-family: var(--mono);
 }
 
 /* ---------- Overlays ---------- */
@@ -1386,6 +1583,10 @@ textarea#db-sql:focus {
   background: var(--hover);
   color: var(--text);
 }
+.error-toast.exiting {
+  pointer-events: none;
+  animation: toast-out 180ms ease-in both;
+}
 .busybar {
   position: fixed;
   top: 42px;
@@ -1432,6 +1633,16 @@ textarea#db-sql:focus {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
   }
 }
 @keyframes busybar-in {
@@ -1501,6 +1712,48 @@ textarea#db-sql:focus {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* At sidebar minimums, controls get a dedicated line instead of competing
+   with their labels. This also keeps host zoom levels from causing overlap. */
+@media (max-width: 280px) {
+  .row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  .row-controls {
+    width: 100%;
+    max-width: none;
+    justify-content: stretch;
+  }
+  .row-controls > *,
+  .select-wrap,
+  .run-target-picker,
+  .run-target-trigger,
+  .settings-group .action-button.compact {
+    width: 100%;
+    max-width: none;
+  }
+  .run-target-trigger {
+    min-width: 0;
+  }
+  .select-wrap select {
+    width: 100%;
+    text-align: left;
+  }
+  .section-status {
+    max-width: 44vw;
+  }
+  .device-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .setup-actions,
+  .mode-row {
+    flex-direction: column;
   }
 }
 
