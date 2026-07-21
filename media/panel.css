@@ -1849,6 +1849,12 @@ details.toolchain > .section-body {
   background: var(--text);
   color: var(--page);
 }
+.segment .mode-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  margin: 0 auto;
+}
 .speed {
   min-width: 48px;
   font-family: var(--mono);

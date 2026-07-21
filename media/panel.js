@@ -45,6 +45,10 @@ const iconShapes={
  phone:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
  moon:'<path d="M20.5 15.5A9 9 0 0 1 8.5 3.5a9 9 0 1 0 12 12z"/>',
+ walk:'<path fill="currentColor" stroke="none" d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9 7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6z"/>',
+ run:'<path fill="currentColor" stroke="none" d="M13.49 5.48c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm-3.6 13.9 1-4.4 2.1 2v6h2v-7.5l-2.1-2 .6-3c1.3 1.5 3.3 2.5 5.5 2.5v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.28v4.7h2v-3.4l1.8-.7-1.6 8.1-4.9-1-.4 2z"/>',
+ cycle:'<path fill="currentColor" stroke="none" d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.9 0-3.5-1.6-3.5-3.5s1.6-3.5 3.5-3.5 3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5zm5.8-10 2.4-2.4.8.8c1.3 1.3 3 2.1 5.1 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2zm8.2 1.5c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.9 0-3.5-1.6-3.5-3.5s1.6-3.5 3.5-3.5 3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z"/>',
+ drive:'<path fill="currentColor" stroke="none" d="M18.92 6.01A1.5 1.5 0 0 0 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8zM6.5 16A1.5 1.5 0 1 1 6.5 13a1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM5 11l1.5-4.5h11L19 11z"/>',
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
@@ -63,6 +67,7 @@ let deepLinkDraft=savedUi.deepLinkDraft||'';
 let sqlDraft=savedUi.sqlDraft||'';
 let runTargetMenuOpen=Boolean(savedUi.runTargetMenuOpen);
 let streamSerial = savedUi.streamSerial || '';
+let inspectorSerial = savedUi.inspectorSerial || '';
 let locationState={view:savedUi.locationView==='route'?'route':'point',trail:0,mode:'walk',multiplier:1,status:'idle',arc:0,elapsed:0,angle:0,last:0,lastPush:0,serial:'',error:'',coords:'',selection:null,map:{zoom:1,lat:0,lng:0}};
 const trails=[
  {name:'Apple Park Loop',description:'A gentle loop around Apple Park',mode:'walk',loop:true,waypoints:[[37.33272,-122.00833,49],[37.33373,-122.00663,49],[37.33540,-122.00633,49],[37.33675,-122.00759,45],[37.33698,-122.00969,48],[37.33598,-122.01138,49],[37.33431,-122.01169,50],[37.33296,-122.01042,51]]},
@@ -75,7 +80,8 @@ let mapPointer=null;
 let mapDirty=true;
 const send=(type,extra={})=>vscode.postMessage({type,...extra});
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const saveUi=()=>vscode.setState?.({uiVersion,deepLinkDraft,sqlDraft,locationView:locationState.view,runTargetMenuOpen,streamSerial,openSections:[...openSections]});
+const countLabel=(count,singular,plural=singular+'s')=>count+' '+(count===1?singular:plural);
+const saveUi=()=>vscode.setState?.({uiVersion,deepLinkDraft,sqlDraft,locationView:locationState.view,runTargetMenuOpen,streamSerial,inspectorSerial,openSections:[...openSections]});
 const captureScrollState=()=>({page:{left:document.scrollingElement?.scrollLeft||0,top:document.scrollingElement?.scrollTop||0},regions:new Map([...app.querySelectorAll('[data-preserve-scroll]')].map((el)=>[el.dataset.preserveScroll,{left:el.scrollLeft,top:el.scrollTop}]))});
 const restoreScrollState=(snapshot)=>{for(const el of app.querySelectorAll('[data-preserve-scroll]')){const position=snapshot.regions.get(el.dataset.preserveScroll);if(position){el.scrollLeft=position.left;el.scrollTop=position.top}}if(document.scrollingElement){document.scrollingElement.scrollLeft=snapshot.page.left;document.scrollingElement.scrollTop=snapshot.page.top}};
 const section=(id,title,status,body)=>'<details class="tool-section" data-section="'+id+'"'+(openSections.has(id)?' open':'')+'><summary><span class="section-title">'+icon(sectionIcons[id])+'<span>'+esc(title)+'</span></span><span class="section-status">'+status+'</span>'+chevron+'</summary><div class="section-body">'+body+'</div></details>';
@@ -85,7 +91,8 @@ const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span clas
 const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':status==='error-exit'?'<span class="action-result error exiting">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
 const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
 const sectionFooter=(message,id,disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null),running=op?.status==='running';return '<div class="section-footer"><span class="section-footer-message">'+esc(message||'')+'</span><button class="section-refresh action-button" data-action="'+id+'" type="button" title="'+esc(op?.message||'Refresh')+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>Refresh</span></button></div>'};
-const ALL_SECTIONS=['build','device','deeplinks','inspector',...(SHOW_PERFORMANCE?['performance']:[]),'database','appdata','location','stream','toolchain'];
+const ALL_SECTIONS=['build','device','deeplinks','inspector',...(SHOW_PERFORMANCE?['performance']:[]),'database','appdata','location','stream'];
+const setMainSectionsExpanded=(expanded)=>{const toolchainOpen=openSections.has('toolchain');openSections=new Set(expanded?ALL_SECTIONS:[]);if(toolchainOpen)openSections.add('toolchain');saveUi();render()};
 window.addEventListener('message',({data})=>{
  if(data.type==='state'){
   state=data.state;
@@ -98,8 +105,8 @@ window.addEventListener('message',({data})=>{
   state.performance=data.performance;
   updatePerformanceView();
  }
- if(data.type==='expand-all'){openSections=new Set(ALL_SECTIONS);saveUi();render()}
- if(data.type==='collapse-all'){openSections=new Set();saveUi();render()}
+ if(data.type==='expand-all')setMainSectionsExpanded(true);
+ if(data.type==='collapse-all')setMainSectionsExpanded(false);
  if(data.type==='location-result'){locationState.error=data.ok?'':data.error;updateLocationText()}
 });
 render();
@@ -111,6 +118,8 @@ function render(){
  const scrollState=captureScrollState();
  const devices=state.devices||[],online=devices.filter((d)=>d.state==='device'),locationDevices=online.filter((d)=>d.serial.startsWith('emulator-')),avds=state.emulators||[];
  if(online.length&&!online.some((d)=>d.serial===streamSerial))streamSerial=online[0].serial;
+ if(online.length&&!online.some((d)=>d.serial===inspectorSerial))inspectorSerial=online[0].serial;
+ if(!online.length)inspectorSerial='';
  if(!locationDevices.some((d)=>d.serial===locationState.serial))locationState.serial=locationDevices[0]?.serial||'';
  if(locationState.status==='playing'&&state.adbStatus!=='checking'&&!canPlayRoute(state.adbStatus==='ready',locationState.serial)){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}
  const optionsFor=(serial)=>online.length?online.map((d)=>'<option value="'+esc(d.serial)+'"'+(d.serial===(serial||online[0]?.serial)?' selected':'')+'>'+esc(d.description)+'</option>').join(''):'<option value="">No device online</option>';
@@ -123,7 +132,7 @@ function render(){
  const build=buildSection(variants,selected,cliReady,adbReady);
  const deviceStatus='<span class="location-live"><span class="status-dot '+(online.length?'on':'')+'"></span>'+online.length+' online</span>';
  const device=section('device','Devices',deviceStatus,deviceSection(devices,avds,cliReady,adbReady));
- const inspector=inspectorSection(cliReady,adbReady,online);
+ const inspector=inspectorSection(optionsFor(inspectorSerial),cliReady,adbReady,online);
  const performance=SHOW_PERFORMANCE?performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady):'';
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
@@ -383,29 +392,30 @@ function animatePerformanceMetric(id,next,format){
  performanceMetricFrames.set(id,requestAnimationFrame(step));
 }
 
-function inspectorSection(cliReady,adbReady,online){
+function inspectorSection(deviceOptions,cliReady,adbReady,online){
  const recording=Boolean(state.recording?.active);
  const status=recording?'Recording…':state.screenshot?(state.screenshotSaved?'Saved':'Unsaved preview'):cliReady||adbReady?'Ready':!cliReady?'Needs CLI':'Needs ADB';
+ const target=group(row('Device',selectWrap('inspector-device',deviceOptions,{disabled:recording||!online.length,label:'Inspector device'}),'','Capture target'));
  const preview=state.screenshot
   ?'<div class="inspector-preview"><img class="preview" src="'+esc(state.screenshot)+'" alt="Latest device screenshot"><div class="inspector-preview-footer"><span>'+esc(state.screenshotSaved?'Saved copy':'Not saved')+'</span>'+actionButton('screenshot-save','Save as…','secondary compact')+'</div></div>'
   :'<div class="inspector-empty dotted"><span class="inspector-reticle" aria-hidden="true">'+icon('inspector')+'</span><strong>Device viewfinder</strong><span>Capture a screen or start a recording.</span></div>';
  const recordAction=recording
   ?inspectorAction('screen-record-stop','stop','Stop','Stop recording and save the video',!adbReady)
   :inspectorAction('screen-record-start','record','Record','Capture up to 3 minutes of device video',!adbReady||!online.length||recording);
- return section('inspector','Inspector',status,'<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady)+recordAction+'</div>'+(recording?'<div class="recording-banner"><span class="status-dot on"></span>Recording on '+esc(state.recording.serial)+'</div>':'')+'</div>');
+ return section('inspector','Inspector',status,target+'<div class="inspector-shell">'+preview+'<div class="inspector-actions">'+inspectorAction('screenshot','camera','Capture','Take a clean device snapshot',!cliReady||!online.length)+inspectorAction('screenshot-annotated','sparkles','Annotate','Capture with detected UI elements highlighted',!cliReady||!online.length)+inspectorAction('layout','braces','Layout','Inspect the accessibility tree as JSON',!cliReady||!online.length)+recordAction+'</div>'+(recording?'<div class="recording-banner"><span class="status-dot on"></span>Recording on '+esc(state.recording.serial)+'</div>':'')+'</div>');
 }
 
 function databaseSection(deviceOptions,adbReady,sqliteReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
  if(db.query&&!sqlDraft)sqlDraft=db.query;
  const processes=db.processes||[];
- const status=state.databaseScanning?'Scanning…':!sqliteReady?'Needs SQLite':db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?processes.length+' apps':'Debuggable';
+ const status=state.databaseScanning?'Scanning…':!sqliteReady?'Needs SQLite':db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?countLabel(processes.length,'app'):'Debuggable';
  const processOptions=processes.length
   ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===db.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
   :'<option value="">Scan debuggable apps</option>';
  const dbOptions=(db.databases||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedDatabase?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No databases</option>';
  const tableOptions=(db.tables||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedTable?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No user tables</option>';
- const footerMessage=db.result?(db.message||db.result.message||(db.result.rows?.length+' row(s)')):(db.message||'');
+ const footerMessage=db.result?(db.message||db.result.message||countLabel(db.result.rows?.length||0,'row')):(db.message||'');
  const result=db.result
   ?databaseResult(db.result,db.selectedTable)
   :'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
@@ -499,7 +509,8 @@ function locationSection(deviceOptions,adbReady){
  const routeScene='<div class="route-scene"><canvas id="route-canvas"></canvas><span class="scene-chip elevation low">'+Math.round(prepared.minAlt)+' m</span><span class="scene-chip elevation high">'+Math.round(prepared.maxAlt)+' m</span></div>';
  const readout='<div class="route-readout"><div class="stat"><div class="stat-label">Distance</div><div class="stat-value" id="distance-stat">'+formatDistance(locationState.arc)+'</div></div><div class="stat"><div class="stat-label">Pace</div><div class="stat-value" id="pace-stat">'+formatPace(speed())+'</div></div><div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value" id="elapsed-stat">'+formatDuration(locationState.elapsed)+'</div></div></div>';
  const playback='<div class="action-strip"><button class="primary" id="play-location"'+(routeReady?'':' disabled')+'>'+icon(locationState.status==='playing'?'pause':'play')+'<span>'+(locationState.status==='playing'?'Pause':'Play')+'</span></button><button class="secondary" id="stop-location"'+(locationState.status==='idle'?' disabled':'')+'>'+icon('stop')+'<span>Stop</span></button></div>';
- const modes='<div class="mode-row"><div class="segmented" role="group" aria-label="Movement mode">'+['walk','run','cycle','drive'].map((m)=>'<button class="segment '+(m===locationState.mode?'active':'')+'" data-mode="'+m+'" title="'+m+'">'+({walk:'●',run:'↗',cycle:'∞',drive:'◆'}[m])+'</button>').join('')+'</div><button class="secondary speed" id="speed-location">'+locationState.multiplier+'×</button></div>';
+ const modeLabels={walk:'Walk',run:'Run',cycle:'Ride',drive:'Drive'};
+ const modes='<div class="mode-row"><div class="segmented" role="group" aria-label="Movement mode">'+['walk','run','cycle','drive'].map((m)=>'<button class="segment '+(m===locationState.mode?'active':'')+'" data-mode="'+m+'" title="'+modeLabels[m]+'" aria-label="'+modeLabels[m]+'" aria-pressed="'+(m===locationState.mode)+'">'+icon(m,'mode-icon')+'</button>').join('')+'</div><button class="secondary speed" id="speed-location">'+locationState.multiplier+'×</button></div>';
  const routePanel='<div class="location-panel route-panel" role="tabpanel">'+routeControls+routeScene+readout+playback+modes+'</div>';
  const panel=locationState.view==='point'?pointPanel:routePanel;
  return section('location','Location',status,target+switcher+panel+'<div class="location-error" id="location-error">'+esc(locationState.error)+'</div>');
@@ -511,9 +522,10 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated'});else if(action==='screenshot-save')send('screenshot-save');else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:controlsSerial||openDeviceMenu||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated',serial:document.getElementById('inspector-device')?.value||''});else if(action==='screenshot-save')send('screenshot-save');else if(action==='layout')send('layout',{serial:document.getElementById('inspector-device')?.value||''});else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('stream-device')?.addEventListener('change',(e)=>{streamSerial = e.target.value; saveUi()});
+ document.getElementById('inspector-device')?.addEventListener('change',(e)=>{inspectorSerial=e.target.value;saveUi()});
  document.getElementById('run-target-trigger')?.addEventListener('click',()=>setRunTargetMenuOpen(!runTargetMenuOpen));
  document.getElementById('open-devices-from-targets')?.addEventListener('click',()=>{runTargetMenuOpen=false;openSections.add('device');saveUi();render();requestAnimationFrame(()=>document.querySelector('details[data-section="device"]')?.scrollIntoView({behavior:'smooth',block:'start'}))});
  app.querySelectorAll('.run-target-checkbox').forEach((el)=>el.addEventListener('change',()=>{state.selectedRunTargets=[...app.querySelectorAll('.run-target-checkbox:checked')].map((input)=>input.dataset.targetId);send('run-targets',{ids:state.selectedRunTargets});render()}));

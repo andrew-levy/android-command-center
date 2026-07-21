@@ -26,6 +26,9 @@ test('Panel rerenders preserve page and nested scroll positions', () => {
 test('Database renders a reachable refresh action and targets the selected database device', () => {
   assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
   assert.match(panel, /action==='db-refresh'\)send\('db-refresh',\{serial:document\.getElementById\('db-device'\)\?\.value\|\|''\}\)/);
+  assert.match(panel, /countLabel\(processes\.length,'app'\)/);
+  assert.match(panel, /countLabel\(db\.result\.rows\?\.length\|\|0,'row'\)/);
+  assert.doesNotMatch(panel, /row\(s\)|processes\.length\+' apps'/);
 });
 
 test('App data and Database refresh actions share bottom footers with their status messages', () => {
@@ -213,7 +216,18 @@ test('Inspector hosts screen recording beside capture actions', () => {
   assert.match(extension, /validateMp4Recording/);
 });
 
-test('View title exposes expand-all and collapse-all controls', () => {
+test('Inspector exposes a persisted device picker and targets every device action', () => {
+  assert.match(panel, /selectWrap\('inspector-device',deviceOptions/);
+  assert.match(panel, /let inspectorSerial = savedUi\.inspectorSerial \|\| ''/);
+  assert.match(panel, /inspectorSerial=e\.target\.value;saveUi\(\)/);
+  assert.match(panel, /send\('screenshot',\{annotate:action==='screenshot-annotated',serial:document\.getElementById\('inspector-device'\)\?\.value\|\|''\}\)/);
+  assert.match(panel, /send\('layout',\{serial:document\.getElementById\('inspector-device'\)\?\.value\|\|''\}\)/);
+  assert.match(panel, /send\('screen-record-start',\{serial:document\.getElementById\('inspector-device'\)\?\.value\|\|''\}\)/);
+  assert.match(extension, /ANDROID_SERIAL: target/);
+  assert.match(extension, /\['layout', '--pretty', `--device=\$\{target\}`\]/);
+});
+
+test('View title expand-all and collapse-all controls leave Toolchain unchanged', () => {
   assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.expandAll'), true);
   assert.equal(manifest.contributes.commands.some(({command}) => command === 'androidCli.collapseAll'), true);
   assert.match(extension, /androidCli\.expandAll/);
@@ -221,6 +235,9 @@ test('View title exposes expand-all and collapse-all controls', () => {
   assert.match(panel, /data\.type==='expand-all'/);
   assert.match(panel, /data\.type==='collapse-all'/);
   assert.match(panel, /const ALL_SECTIONS=/);
+  assert.doesNotMatch(panel, /const ALL_SECTIONS=\[[^\n]*'toolchain'/);
+  assert.match(panel, /const setMainSectionsExpanded=\(expanded\)=>\{const toolchainOpen=openSections\.has\('toolchain'\)/);
+  assert.match(panel, /if\(toolchainOpen\)openSections\.add\('toolchain'\)/);
 });
 
 test('Performance section monitors gfxinfo vitals without becoming a profiler', () => {

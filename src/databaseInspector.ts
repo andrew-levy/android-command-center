@@ -34,6 +34,10 @@ export type DatabaseInspectorState = {
 const ROW_LIMIT = 200;
 const SQLITE_HEADER = Buffer.from('SQLite format 3\0', 'binary');
 
+export function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function emptyDatabaseState(): DatabaseInspectorState {
   return { processes: [], databases: [], tables: [], query: '', dirty: false };
 }
@@ -133,7 +137,7 @@ export class DatabaseInspector {
       this.state.dirty = true;
       await this.push();
       await this.loadTables();
-      this.state.message = `Applied on device · ${result.message ?? `${result.changes ?? 0} change(s)`}`;
+      this.state.message = `Applied on device · ${result.message ?? countLabel(result.changes ?? 0, 'change')}`;
     } else {
       this.state.message = result.truncated ? `Showing first ${ROW_LIMIT} rows` : result.message;
     }
@@ -149,7 +153,7 @@ export class DatabaseInspector {
     this.state.query = sql;
     await this.push();
     await this.openTable(table);
-    this.state.message = `Updated ${column} · pushed to device (${result.changes ?? 0} row)`;
+    this.state.message = `Updated ${column} · pushed to device (${countLabel(result.changes ?? 0, 'row')})`;
     return this.snapshot();
   }
 
@@ -442,7 +446,7 @@ async function runSqlite(sqlitePath: string, databasePath: string, sql: string, 
     });
     const parsed = parseJsonRows(stdout, sql);
     const changes = Number(parsed.rows[0]?.[0] ?? 0);
-    return { columns: [], rows: [], changes, message: `${changes} change(s)` };
+    return { columns: [], rows: [], changes, message: countLabel(changes, 'change') };
   } catch (error) {
     if (isMissingExecutable(error)) throw sqliteError(error, sqlitePath);
     // Fallback for statements that cannot run inside an explicit transaction batch.
@@ -508,7 +512,7 @@ function parseJsonRows(stdout: string, sql: string): DbQueryResult {
     columns,
     rows: values,
     truncated: /limit\s+\d+/i.test(sql) ? undefined : values.length >= ROW_LIMIT,
-    message: `${values.length} row(s)`,
+    message: countLabel(values.length, 'row'),
   };
 }
 

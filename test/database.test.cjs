@@ -6,7 +6,13 @@ const os = require('node:os');
 const path = require('node:path');
 const {spawnSync} = require('node:child_process');
 
-const {isMutatingSql, prepareLocalDatabase, quoteIdent, sqlLiteral, withLimit} = require('../dist/databaseInspector.js');
+const {countLabel, isMutatingSql, prepareLocalDatabase, quoteIdent, sqlLiteral, withLimit} = require('../dist/databaseInspector.js');
+
+test('count labels use singular and plural nouns correctly', () => {
+  assert.equal(countLabel(0, 'app'), '0 apps');
+  assert.equal(countLabel(1, 'app'), '1 app');
+  assert.equal(countLabel(2, 'row'), '2 rows');
+});
 
 test('read queries receive a safety limit without duplicating an existing limit', () => {
   assert.match(withLimit('SELECT * FROM records;'), /LIMIT 200;$/);

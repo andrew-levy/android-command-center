@@ -406,7 +406,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
           String(message.permission ?? ''),
           Boolean(message.grant),
         ); return;
-        case 'screenshot': await this.screenshot(Boolean(message.annotate)); return;
+        case 'screenshot': await this.screenshot(Boolean(message.annotate), String(message.serial ?? '')); return;
         case 'screenshot-save': await this.saveScreenshot(); return;
         case 'screen-record-start': await this.startScreenRecord(String(message.serial ?? '')); return;
         case 'screen-record-stop': await this.stopScreenRecord(true); return;
@@ -416,7 +416,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'performance-stop': this.stopPerformanceMonitor(); this.render(); return;
         case 'performance-reset': await this.resetPerformanceCounters(); return;
         case 'performance-dump': await this.dumpPerformance(); return;
-        case 'layout': await this.layout(); return;
+        case 'layout': await this.layout(String(message.serial ?? '')); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'logcat': {
@@ -903,12 +903,13 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     return vscode.Uri.file(path.join(os.homedir(), filename));
   }
 
-  private async screenshot(annotate: boolean): Promise<void> {
+  private async screenshot(annotate: boolean, serial: string): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
     const folder = vscode.Uri.joinPath(this.privateStorageUri(), 'screenshot-previews');
     await vscode.workspace.fs.createDirectory(folder);
     const file = vscode.Uri.joinPath(folder, screenshotFilename(annotate));
     try {
-      await this.busy('Capturing screenshot…', () => run(cli(), ['screen', 'capture', `--output=${file.fsPath}`, ...(annotate ? ['--annotate'] : [])]), annotate ? 'screenshot-annotated' : 'screenshot', 'Screenshot captured');
+      await this.busy('Capturing screenshot…', () => run(cli(), ['screen', 'capture', `--output=${file.fsPath}`, ...(annotate ? ['--annotate'] : [])], undefined, 30_000, { ...process.env, ANDROID_SERIAL: target }), annotate ? 'screenshot-annotated' : 'screenshot', 'Screenshot captured');
     } catch (error) {
       await vscode.workspace.fs.delete(file, { useTrash: false }).then(undefined, () => undefined);
       throw error;
@@ -959,10 +960,11 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       .map((entry) => vscode.workspace.fs.delete(entry, { recursive: true, useTrash: false }).then(undefined, () => undefined)));
   }
 
-  private async layout(): Promise<void> {
+  private async layout(serial: string): Promise<void> {
+    const target = this.requireOnlineSerial(serial);
     const document = await vscode.workspace.openTextDocument({
       language: 'json',
-      content: await this.busy('Reading accessibility tree…', () => run(cli(), ['layout', '--pretty']), 'layout', 'Accessibility tree opened'),
+      content: await this.busy('Reading accessibility tree…', () => run(cli(), ['layout', '--pretty', `--device=${target}`]), 'layout', 'Accessibility tree opened'),
     });
     await vscode.window.showTextDocument(document, { preview: true });
   }
@@ -1741,8 +1743,8 @@ function gradleWrapper(root: vscode.Uri): string {
   return wrapper;
 }
 
-async function run(file: string, args: string[], cwd = firstRoot()?.fsPath, timeout = 30_000): Promise<string> {
-  const { stdout } = await execFileAsync(file, args, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
+async function run(file: string, args: string[], cwd = firstRoot()?.fsPath, timeout = 30_000, env?: NodeJS.ProcessEnv): Promise<string> {
+  const { stdout } = await execFileAsync(file, args, { cwd, timeout, env, maxBuffer: 10 * 1024 * 1024 });
   return stdout;
 }
 
