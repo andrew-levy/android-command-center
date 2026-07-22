@@ -1698,14 +1698,14 @@ function inspectProjectRoot(): ProjectRootInfo {
   if (resolved.error === 'no-workspace' || !resolved.rootPath) {
     return {
       status: 'missing-folder',
-      message: 'Open a folder that contains your Android project, or set androidCli.projectRoot to that directory.',
+      message: 'Open a folder that contains your Android project, or configure the project root above.',
     };
   }
   if (!fs.existsSync(resolved.rootPath) || !fs.statSync(resolved.rootPath).isDirectory()) {
     return {
       status: 'missing-path',
       displayPath: resolved.displayPath,
-      message: `Project root not found: ${resolved.displayPath}. Update androidCli.projectRoot.`,
+      message: `Project root not found: ${resolved.displayPath}. Configure the project root above.`,
     };
   }
   const uri = vscode.Uri.file(resolved.rootPath);
@@ -1718,7 +1718,7 @@ function inspectProjectRoot(): ProjectRootInfo {
       uri,
       displayPath,
       status: 'missing-wrapper',
-      message: `No Gradle wrapper in ${displayPath}. Set androidCli.projectRoot to the Android project directory that contains gradlew.`,
+      message: `No Gradle wrapper in ${displayPath}. Configure the project root above to the directory that contains gradlew.`,
     };
   }
   return { uri, displayPath, status: 'ready' };
@@ -1738,7 +1738,7 @@ function gradleWrapperPath(root: vscode.Uri): string {
 function gradleWrapper(root: vscode.Uri): string {
   const wrapper = gradleWrapperPath(root);
   if (!fs.existsSync(wrapper)) {
-    throw new Error(`Gradle wrapper not found: ${wrapper}. Set androidCli.projectRoot to your Android project directory.`);
+    throw new Error(`Gradle wrapper not found: ${wrapper}. Configure the project root above to the directory that contains gradlew.`);
   }
   return wrapper;
 }

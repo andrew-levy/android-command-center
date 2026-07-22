@@ -15,7 +15,7 @@ A Cursor/VS Code activity-bar panel for everyday Android development without ope
 
 ## Quick start
 
-1. Install the extension and open an Android project in VS Code or Cursor. If you open a parent monorepo folder, use the Project gear to choose the Android app directory that contains `gradlew`.
+1. Install the extension and open an Android project in VS Code or Cursor. If you open a parent monorepo folder, configure the project root in **Build** to the Android app directory that contains `gradlew`.
 2. Select the Android robot in the activity bar.
 3. Review the **Toolchain** section and prepare or select any missing tools.
 4. Choose a Gradle variant, select one or more active deployment targets, and click **Run**. Start inactive emulators from **Devices** first.
@@ -29,19 +29,22 @@ Android Command Center uses the tools installed in the environment where its VS 
 - A project Gradle wrapper (`gradlew` or `gradlew.bat`) for Sync, Run, and Clean
 - SQLite 3 (`sqlite3`) for Database inspection
 
-The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths. When the workspace folder is not the Gradle project root, choose it with the Project gear or set `androidCli.projectRoot` directly.
+The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths. When the workspace folder is not the Gradle project root, configure it from the Project control in **Build**. Optionally set `androidCli.activity` to launch a specific activity after install; leave it empty to use the variant MAIN/LAUNCHER activity.
 
 ## Features
 
 - Detect the Android CLI, SDK, connected devices, and virtual devices
+- Configure a nested Gradle project root from **Build** when the workspace is a monorepo parent
 - Select one or more active devices or emulators, then build once and install/launch on each target
 - Select discovered Gradle build variants, sync dependencies, run apps, or clean the project
+- Launch the discovered MAIN/LAUNCHER activity, or override it with `androidCli.activity`
 - Open deeplinks inline with manifest-discovered prefixes, per-workspace history, and favorites
 - Retain the webview when hidden and show cached state or a skeleton while refreshing
 - See available and connected devices together, create AVD profiles, and start or stop emulators
 - Open a per-device settings gear for theme, rotation, font scale, emulator battery, and developer overlays
 - Grant common runtime permissions from App data alongside force-stop and clear actions
 - Capture normal or annotated screenshots, record the screen, preview captures in the panel, and choose where to save them
+- Pick an Inspector device, then capture or record without losing the selection on refresh
 - Monitor live performance vitals (FPS, jank, memory, slow frames) for a selected package
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
