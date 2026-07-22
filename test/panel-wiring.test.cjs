@@ -19,6 +19,7 @@ test('Panel rerenders preserve page and nested scroll positions', () => {
   assert.match(panel, /restoreScrollState\(scrollState\)/);
   assert.match(panel, /data-preserve-scroll="deeplink-prefixes"/);
   assert.match(panel, /data-preserve-scroll="database-result"/);
+  assert.match(panel, /data-preserve-scroll="preferences-result"/);
   assert.match(panel, /data-preserve-scroll="run-target-menu"/);
   assert.match(panel, /data-preserve-scroll="toolchain"/);
 });
@@ -33,6 +34,7 @@ test('Database renders a reachable refresh action and targets the selected datab
 
 test('App data and Database refresh actions share bottom footers with their status messages', () => {
   assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
+  assert.match(panel, /sectionFooter\(footerMessage,'prefs-refresh'/);
   assert.match(panel, /sectionFooter\(state\.appDataMessage,'app-packages'/);
   assert.match(panel, /class="section-footer"/);
   assert.match(panel, /class="section-footer-message"/);
@@ -65,13 +67,33 @@ test('Database tables use a select and startup database scans stay metadata-only
   assert.match(extension, /await this\.autoScanSections\(true\)/);
   assert.match(extension, /this\.autoRefreshAppPackages\(serial\)/);
   assert.match(extension, /this\.autoRefreshDatabase\(serial\)/);
+  assert.match(extension, /this\.autoRefreshPreferences\(serial\)/);
   assert.match(extension, /refreshProcesses\(serial, this\.state\.applicationId, false, false\)/);
   assert.match(panel, /el\.dataset\.section==='database'.*send\('db-open'\)/);
+  assert.match(panel, /el\.dataset\.section==='preferences'.*send\('prefs-open'\)/);
+});
+
+test('SharedPreferences inspector mirrors Database device → app → file flow', () => {
+  assert.match(panel, /section\('preferences','Preferences'/);
+  assert.match(panel, /sectionFooter\(footerMessage,'prefs-refresh'/);
+  assert.match(panel, /selectWrap\('prefs-device'/);
+  assert.match(panel, /selectWrap\('prefs-package'/);
+  assert.match(panel, /selectWrap\('prefs-file'/);
+  assert.match(panel, /action==='prefs-refresh'\)send\('prefs-refresh'/);
+  assert.match(panel, /send\('prefs-set',\{key,valueType:type,value:next\}\)/);
+  assert.match(panel, /send\('prefs-delete',\{key\}\)/);
+  assert.match(panel, /data-preserve-scroll="preferences-result"/);
+  assert.match(extension, /new SharedPreferencesInspector\(adb, \(\) => this\.privateStorageUri\(\)\.fsPath\)/);
+  assert.match(extension, /case 'prefs-refresh': await this\.prefsRefresh/);
+  assert.match(extension, /case 'prefs-set': await this\.prefsSetEntry/);
+  assert.match(extension, /case 'prefs-delete': await this\.prefsDeleteEntry/);
+  assert.match(extension, /autoRefreshPreferences\(serial\)/);
 });
 
 test('Runtime artifacts use private extension storage instead of the project', () => {
   assert.match(extension, /this\.context\.storageUri \?\? vscode\.Uri\.joinPath\(this\.context\.globalStorageUri, 'workspace-less'\)/);
   assert.match(extension, /new DatabaseInspector\(adb, sqlite, \(\) => this\.privateStorageUri\(\)\.fsPath\)/);
+  assert.match(extension, /new SharedPreferencesInspector\(adb, \(\) => this\.privateStorageUri\(\)\.fsPath\)/);
   assert.match(extension, /vscode\.Uri\.joinPath\(this\.privateStorageUri\(\), 'screenshot-previews'\)/);
 });
 

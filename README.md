@@ -49,6 +49,7 @@ The dashboard detects each dependency and offers setup actions when one is unava
 - Set an arbitrary emulator GPS coordinate or simulate movement along a route
 - Open filtered-device logcat
 - Inspect SQLite / Room databases for debuggable apps, run SQL, edit cells, and push changes back to the device
+- Browse and edit SharedPreferences for debuggable apps, then push XML changes back to the device
 - Clear app cache or storage and force-stop installed packages on a connected device
 
 The extension deliberately does not wrap `android studio ...` commands: those require a running Android Studio instance. Kotlin language intelligence should be supplied by a VS Code language-server extension.
@@ -57,7 +58,7 @@ The extension deliberately does not wrap `android studio ...` commands: those re
 
 Android Command Center does not require an account or send project data to a hosted service. It invokes the Android CLI, ADB, Gradle wrapper, and SQLite tools in the extension-host environment. Interactive and long-running commands open in the integrated terminal so you can inspect or cancel them.
 
-Destructive app-data actions identify the selected device and package and require confirmation where appropriate. Database editing is intended for debuggable apps and uses disposable working copies in VS Code/Cursor's private extension storage. Android Command Center does not create runtime folders in your project.
+Destructive app-data actions identify the selected device and package and require confirmation where appropriate. Database and SharedPreferences editing is intended for debuggable apps and uses disposable working copies in VS Code/Cursor's private extension storage. Android Command Center does not create runtime folders in your project.
 
 ## Develop
 
@@ -91,3 +92,14 @@ Inspect SQLite / Room databases for **debuggable** apps without Android Studio:
 4. Mutating statements and cell edits are applied locally then **pushed** back to the device. Use **Push** if you need to retry a write.
 
 Working copies live in private, workspace-scoped extension storage and are cleaned automatically. Opening the dashboard only discovers database metadata; a database is copied after you interact with the **Database** section. If the app already has the DB open, force-stop or relaunch it after a push so it reloads from disk.
+
+## Preferences inspector
+
+Inspect Android SharedPreferences for **debuggable** apps without Android Studio:
+
+1. Open the **Preferences** section and choose a device.
+2. **Scan apps** to list packages that allow `run-as` (debug builds).
+3. Pick a process and preferences XML file, then browse key / type / value rows.
+4. Click a value to edit, use **Add key** for new entries, or **Delete** to remove one. Changes are written locally then **pushed** back to the device.
+
+Working copies live in private extension storage under `shared_prefs/`. Startup scans stay metadata-only; the selected file is pulled when you open the section. If the app already has preferences loaded in memory, force-stop or relaunch it after a push so it reloads from disk. EncryptedSharedPreferences and Jetpack DataStore are out of scope.

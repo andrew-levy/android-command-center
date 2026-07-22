@@ -2,6 +2,12 @@
 
 All notable changes to Android Command Center are documented here.
 
+## Unreleased
+
+### Added
+
+- Preferences inspector for debuggable apps: select a device and package, browse SharedPreferences XML key/value pairs, edit or delete entries, add keys, and push changes back to the device.
+
 ## 0.1.14 - 2026-07-22
 
 ### Changed

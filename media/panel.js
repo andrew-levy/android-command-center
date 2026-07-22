@@ -20,6 +20,7 @@ const iconShapes={
  deeplinks:'<path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/>',
  inspector:'<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/>',
  database:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+ preferences:'<path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2.5"/>',
  appdata:'<path d="m12 2 8 4-8 4-8-4zM4 10l8 4 8-4M4 14l8 4 8-4"/>',
  location:'<path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>',
  stream:'<path d="M3 12h4l2-7 4 14 2-7h6"/>',
@@ -52,11 +53,11 @@ const iconShapes={
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
-const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',performance:'performance',database:'database',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','db-push':'upload','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',performance:'performance',database:'database',preferences:'preferences',appdata:'appdata',location:'location',stream:'stream'};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','db-push':'upload','prefs-refresh':'refresh','prefs-push':'upload','prefs-add':'plus','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
 const performanceMetricFrames=new Map();
 const SHOW_PERFORMANCE=false;
-let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
+let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},preferences:{processes:[],files:[],entries:[],dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
 let controlsSerial='';
 let openDeviceMenu='';
 const savedUi=vscode.getState?.()||{};
@@ -91,7 +92,7 @@ const selectWrap=(id,options,{disabled=false,label='',title=''}={})=>'<span clas
 const operationVisual=(op,fallback)=>{const status=op?.status||'idle';const transient=status==='running'?'<span class="spinner"></span>':status==='success'?'<span class="spinner completing"></span><span class="action-result success">✓</span>':status==='success-exit'?'<span class="action-result success exiting">✓</span>':status==='error'?'<span class="action-result error">!</span>':status==='error-exit'?'<span class="action-result error exiting">!</span>':'';return '<span class="action-icon-slot '+status+'" aria-hidden="true">'+fallback+transient+'</span>'};
 const actionButton=(id,label,kind='pill',disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null);const running=op?.status==='running';return '<button class="'+kind+' action-button" data-action="'+id+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>'+esc(label)+'</span></button>'};
 const sectionFooter=(message,id,disabled=false,busy=false)=>{const op=state.operation?.id===id?state.operation:(busy?{status:'running'}:null),running=op?.status==='running';return '<div class="section-footer"><span class="section-footer-message">'+esc(message||'')+'</span><button class="section-refresh action-button" data-action="'+id+'" type="button" title="'+esc(op?.message||'Refresh')+'"'+(running||disabled?' disabled':'')+(running?' aria-busy="true"':'')+'>'+operationVisual(op,icon(actionIcons[id]))+'<span>Refresh</span></button></div>'};
-const ALL_SECTIONS=['build','device','deeplinks','inspector',...(SHOW_PERFORMANCE?['performance']:[]),'database','appdata','location','stream'];
+const ALL_SECTIONS=['build','device','deeplinks','inspector',...(SHOW_PERFORMANCE?['performance']:[]),'database','preferences','appdata','location','stream'];
 const setMainSectionsExpanded=(expanded)=>{const toolchainOpen=openSections.has('toolchain');openSections=new Set(expanded?ALL_SECTIONS:[]);if(toolchainOpen)openSections.add('toolchain');saveUi();render()};
 window.addEventListener('message',({data})=>{
  if(data.type==='state'){
@@ -135,11 +136,12 @@ function render(){
  const inspector=inspectorSection(optionsFor(inspectorSerial),cliReady,adbReady,online);
  const performance=SHOW_PERFORMANCE?performanceSection(optionsFor(state.performance?.serial||state.appPackagesSerial),adbReady):'';
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
+ const preferences=preferencesSection(optionsFor(state.preferences?.serial),adbReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
  const stream=section('stream','Stream','Logcat',group(row('Device',selectWrap('stream-device',optionsFor(streamSerial),{disabled:!online.length,label:'Logcat device'}),'','Log source')+row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady||!online.length),'','Live Logcat output')));
  const loadingToast=state.initializing?'<div class="loading-toast" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading tools, devices, and app data…</span></div>':'';
  const errorToast=state.error?'<div class="error-toast'+(state.errorExiting?' exiting':'')+'" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
- app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+performance+database+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
+ app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+performance+database+preferences+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
  bind();
  restoreScrollState(scrollState);
 }
@@ -448,6 +450,44 @@ function databaseResult(result,table){
  return '<div class="db-result"><div class="db-table-wrap" data-preserve-scroll="database-result"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
 }
 
+function preferencesSection(deviceOptions,adbReady){
+ const prefs=state.preferences||{processes:[],files:[],entries:[],dirty:false};
+ const processes=prefs.processes||[];
+ const status=state.preferencesScanning?'Scanning…':prefs.dirty?'Unsaved push':prefs.selectedFile?prefs.selectedFile:processes.length?countLabel(processes.length,'app'):'Debuggable';
+ const processOptions=processes.length
+  ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===prefs.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
+  :'<option value="">Scan debuggable apps</option>';
+ const fileOptions=(prefs.files||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===prefs.selectedFile?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No preference files</option>';
+ const footerMessage=prefs.message||(prefs.entries?.length?countLabel(prefs.entries.length,'key'):'');
+ const result=prefs.localPath||prefs.entries?.length
+  ?preferencesResult(prefs.entries||[])
+  :'<p class="muted">Select an app to inspect its SharedPreferences. Requires a debuggable build.</p>';
+ const controls=group(
+   row('Device',selectWrap('prefs-device',deviceOptions,{disabled:state.preferencesScanning,label:'Preferences device'}),'','Query target')
+   +row('App',selectWrap('prefs-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}),'','Debuggable process')
+   +row('File',selectWrap('prefs-file',fileOptions,{disabled:!(prefs.files?.length),label:'Preferences file'}),'','shared_prefs XML')
+  )
+  +'<div class="action-strip">'+actionButton('prefs-add','Add key','secondary',!prefs.selectedFile)+actionButton('prefs-push','Push','secondary',!prefs.dirty)+'</div>'
+  +(prefs.error?'<div class="location-error">'+esc(prefs.error)+'</div>':'')+result
+  +sectionFooter(footerMessage,'prefs-refresh',!adbReady,state.preferencesScanning);
+ return section('preferences','Preferences',esc(status),controls);
+}
+
+function preferencesResult(entries){
+ if(!entries.length)return '<p class="muted">This preferences file is empty.</p>';
+ const head='<tr><th>Key</th><th>Type</th><th>Value</th><th></th></tr>';
+ const body=entries.map((entry)=>{
+  const display=entry.type==='set'?(entry.value||'').split(/\r?\n/).filter(Boolean).join(', '):entry.value;
+  return '<tr>'
+   +'<td title="'+esc(entry.key)+'">'+esc(entry.key)+'</td>'
+   +'<td class="prefs-type">'+esc(entry.type)+'</td>'
+   +'<td class="db-editable" data-prefs-cell data-key="'+esc(entry.key)+'" data-type="'+esc(entry.type)+'" title="Click to edit">'+esc(display)+'</td>'
+   +'<td class="prefs-actions"><button class="text-button" data-prefs-delete="'+esc(entry.key)+'" type="button" title="Delete key">Delete</button></td>'
+   +'</tr>';
+ }).join('');
+ return '<div class="db-result"><div class="db-table-wrap" data-preserve-scroll="preferences-result"><table class="db-table prefs-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+}
+
 function appDataSection(deviceOptions,adbReady){
  const packages=state.appPackages||[];
  const selected=state.selectedAppPackage||state.applicationId||'';
@@ -521,8 +561,8 @@ function setRunTargetMenuOpen(open){runTargetMenuOpen=Boolean(open);const trigge
 function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
- app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated',serial:document.getElementById('inspector-device')?.value||''});else if(action==='screenshot-save')send('screenshot-save');else if(action==='layout')send('layout',{serial:document.getElementById('inspector-device')?.value||''});else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');if(el.open&&el.dataset.section==='preferences'&&state.preferences?.selectedFile&&!state.preferences?.localPath&&!state.preferencesScanning)send('prefs-open');saveUi()}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated',serial:document.getElementById('inspector-device')?.value||''});else if(action==='screenshot-save')send('screenshot-save');else if(action==='layout')send('layout',{serial:document.getElementById('inspector-device')?.value||''});else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='prefs-refresh')send('prefs-refresh',{serial:document.getElementById('prefs-device')?.value||''});else if(action==='prefs-push')send('prefs-push');else if(action==='prefs-add')addPreferenceEntry();else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('stream-device')?.addEventListener('change',(e)=>{streamSerial = e.target.value; saveUi()});
  document.getElementById('inspector-device')?.addEventListener('change',(e)=>{inspectorSerial=e.target.value;saveUi()});
@@ -558,6 +598,11 @@ function bind(){
  document.getElementById('db-table')?.addEventListener('change',(e)=>send('db-table',{table:e.target.value}));
  document.getElementById('db-sql')?.addEventListener('input',(e)=>{sqlDraft=e.target.value;saveUi()});
  app.querySelectorAll('[data-db-cell]').forEach((el)=>el.addEventListener('click',()=>editDbCell(el)));
+ document.getElementById('prefs-package')?.addEventListener('change',(e)=>send('prefs-package',{packageName:e.target.value}));
+ document.getElementById('prefs-device')?.addEventListener('change',(e)=>send('prefs-refresh',{serial:e.target.value}));
+ document.getElementById('prefs-file')?.addEventListener('change',(e)=>send('prefs-file',{fileName:e.target.value}));
+ app.querySelectorAll('[data-prefs-cell]').forEach((el)=>el.addEventListener('click',()=>editPreferenceCell(el)));
+ app.querySelectorAll('[data-prefs-delete]').forEach((el)=>el.addEventListener('click',()=>{const key=el.dataset.prefsDelete;if(!key)return;if(!window.confirm('Delete preference "'+key+'"?'))return;send('prefs-delete',{key})}));
  document.getElementById('location-device')?.addEventListener('change',(e)=>{locationState.serial=e.target.value;if(!canPlayRoute(state.adbStatus==='ready',locationState.serial)&&locationState.status==='playing'){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}render()});
  app.querySelectorAll('[data-location-view]').forEach((el)=>el.addEventListener('click',()=>{const view=el.dataset.locationView;if(view===locationState.view)return;if(view==='point'&&locationState.status==='playing')locationState.status='paused';locationState.view=view;saveUi();render()}));
  document.getElementById('location-coords')?.addEventListener('input',(e)=>{locationState.coords=e.target.value;const parsed=parseCoords(locationState.coords);if(parsed)syncMapSelection(parsed,true);updateLocationButton();updateLocationText()});
@@ -580,6 +625,33 @@ function editDbCell(el){
  if(next===null)return;
  const value=next.trim().toUpperCase()==='NULL'?null:next;
  send('db-cell',{table:el.dataset.table,rowid:el.dataset.rowid,column:el.dataset.column,value});
+}
+
+function editPreferenceCell(el){
+ const type=el.dataset.type||'string';
+ const key=el.dataset.key||'';
+ const entry=(state.preferences?.entries||[]).find((item)=>item.key===key);
+ const current=entry?.value??'';
+ const hint=type==='set'?' (one value per line, or comma-separated)':type==='boolean'?' (true/false)':'';
+ const next=window.prompt('Edit '+key+' as '+type+hint,current);
+ if(next===null)return;
+ send('prefs-set',{key,valueType:type,value:next});
+}
+
+function addPreferenceEntry(){
+ const key=window.prompt('New preference key');
+ if(key===null)return;
+ const trimmed=key.trim();
+ if(!trimmed)return;
+ const type=(window.prompt('Type: string, boolean, int, long, float, or set','string')||'string').trim().toLowerCase();
+ if(!['string','boolean','int','long','float','set'].includes(type)){
+  window.alert('Unsupported type. Use string, boolean, int, long, float, or set.');
+  return;
+ }
+ const hint=type==='set'?' (one value per line, or comma-separated)':type==='boolean'?' (true/false)':'';
+ const value=window.prompt('Value for '+trimmed+' as '+type+hint,type==='boolean'?'false':type==='set'?'':'');
+ if(value===null)return;
+ send('prefs-set',{key:trimmed,valueType:type,value});
 }
 
 function decodeWorld(topology){

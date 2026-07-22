@@ -170,6 +170,23 @@ Edge paths:
 - package uninstall or device disconnect during pull/query/push;
 - identifiers with spaces/reserved words and attempted edits without a usable rowid.
 
+### Preferences
+
+Happy paths:
+
+- scan a debuggable app, select a SharedPreferences XML file, and read typed key/value rows;
+- edit string, boolean, int, long, float, and set values;
+- add a new key and delete an existing key, then verify push succeeds;
+- force-stop/relaunch the app and verify changed values after reload.
+
+Edge paths:
+
+- no device; non-debuggable app; debuggable app with no `shared_prefs` files; empty preferences file;
+- XML entities in keys/values; empty strings; multi-line / comma-separated set edits;
+- invalid boolean/int/float input rejected without corrupting the file;
+- package uninstall or device disconnect during pull/edit/push;
+- EncryptedSharedPreferences / DataStore files remain unsupported and do not crash the section.
+
 ### App data
 
 Happy paths:

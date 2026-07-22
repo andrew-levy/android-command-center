@@ -6,6 +6,12 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } from './databaseInspector';
 import {
+  SharedPreferencesInspector,
+  emptySharedPreferencesState,
+  type PrefValueType,
+  type SharedPreferencesInspectorState,
+} from './sharedPreferencesInspector';
+import {
   COMMON_PERMISSIONS,
   buildPerformanceIssues,
   emulatorCreateSupported,
@@ -104,6 +110,7 @@ type DashboardState = {
   applicationId?: string;
   launchActivity?: string;
   database: DatabaseInspectorState;
+  preferences: SharedPreferencesInspectorState;
   appPackages: string[];
   appPackagesSerial?: string;
   selectedAppPackage?: string;
@@ -113,6 +120,7 @@ type DashboardState = {
   appDataMessage?: string;
   initializing?: boolean;
   databaseScanning?: boolean;
+  preferencesScanning?: boolean;
   appPackagesScanning?: boolean;
   projectRoot?: string;
   projectRootStatus?: 'ready' | 'missing-folder' | 'missing-path' | 'missing-wrapper';
@@ -166,6 +174,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private operationSequence = 0;
   private errorSequence = 0;
   private readonly databases: DatabaseInspector;
+  private readonly sharedPreferences: SharedPreferencesInspector;
   private screenshotFile?: vscode.Uri;
   private lastProjectRootKey?: string;
   private screenRecordProcess?: ChildProcess;
@@ -177,6 +186,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     const cached = context.workspaceState.get<Partial<DashboardState>>(CACHE_KEY);
     const storedRunTargets = context.workspaceState.get<string[]>(RUN_TARGETS_KEY);
     this.databases = new DatabaseInspector(adb, sqlite, () => this.privateStorageUri().fsPath);
+    this.sharedPreferences = new SharedPreferencesInspector(adb, () => this.privateStorageUri().fsPath);
     this.state = {
       cliAvailable: cached?.cliAvailable ?? false,
       cliStatus: 'checking',
@@ -202,6 +212,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       recentDeepLinks: context.workspaceState.get<string[]>(RECENT_LINKS_KEY) ?? [],
       favoriteDeepLinks: context.workspaceState.get<string[]>(FAVORITE_LINKS_KEY) ?? [],
       database: emptyDatabaseState(),
+      preferences: emptySharedPreferencesState(),
       appPackages: cached?.appPackages ?? [],
       appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
@@ -244,6 +255,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.stopPerformanceMonitor();
     void this.stopScreenRecordProcess();
     void this.databases.dispose();
+    void this.sharedPreferences.dispose();
     if (this.screenshotFile) void vscode.workspace.fs.delete(this.screenshotFile, { useTrash: false }).then(undefined, () => undefined);
   }
 
@@ -362,7 +374,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     if (!serial || this.state.adbStatus !== 'ready') return;
     if (!force && serial === this.autoScannedSerial) return;
     this.autoScannedSerial = serial;
-    const scans: Promise<void>[] = [this.autoRefreshAppPackages(serial)];
+    const scans: Promise<void>[] = [
+      this.autoRefreshAppPackages(serial),
+      this.autoRefreshPreferences(serial),
+    ];
     if (this.state.sqliteStatus === 'ready') scans.push(this.autoRefreshDatabase(serial));
     await Promise.allSettled(scans);
   }
@@ -437,6 +452,17 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
           message.value === null || message.value === undefined ? null : String(message.value),
         ); return;
         case 'db-push': await this.dbPush(); return;
+        case 'prefs-refresh': await this.prefsRefresh(String(message.serial ?? '')); return;
+        case 'prefs-open': await this.prefsOpen(); return;
+        case 'prefs-package': await this.prefsSelectPackage(String(message.packageName ?? '')); return;
+        case 'prefs-file': await this.prefsSelectFile(String(message.fileName ?? '')); return;
+        case 'prefs-set': await this.prefsSetEntry(
+          String(message.key ?? ''),
+          String(message.valueType ?? 'string') as PrefValueType,
+          String(message.value ?? ''),
+        ); return;
+        case 'prefs-delete': await this.prefsDeleteEntry(String(message.key ?? '')); return;
+        case 'prefs-push': await this.prefsPush(); return;
         case 'app-packages': await this.refreshAppPackages(String(message.serial ?? '')); return;
         case 'app-package': await this.selectAppPackage(String(message.packageName ?? '')); return;
         case 'app-clear-cache': await this.clearAppCache(String(message.serial ?? ''), String(message.packageName ?? '')); return;
@@ -1074,6 +1100,86 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     );
   }
 
+  private async prefsRefresh(serialHint = ''): Promise<void> {
+    const serial = serialHint || await this.chooseDevice();
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    this.state.preferences = await this.busy(
+      'Scanning debuggable apps…',
+      () => this.sharedPreferences.refreshProcesses(serial, this.state.applicationId, true),
+      'prefs-refresh',
+      'SharedPreferences inspector ready',
+    );
+  }
+
+  private async autoRefreshPreferences(serial: string): Promise<void> {
+    this.state.preferencesScanning = true;
+    this.render();
+    try {
+      this.state.preferences = await this.sharedPreferences.refreshProcesses(serial, this.state.applicationId, false, false);
+    } catch (error) {
+      this.state.preferences = { ...this.sharedPreferences.snapshot(), error: messageOf(error) };
+    } finally {
+      this.state.preferencesScanning = false;
+      this.render();
+    }
+  }
+
+  private async prefsOpen(): Promise<void> {
+    const preferences = this.sharedPreferences.snapshot();
+    if (!preferences.selectedFile || preferences.localPath || this.state.preferencesScanning || this.state.operation?.id === 'prefs-open') return;
+    this.state.preferences = await this.busy(
+      `Opening ${preferences.selectedFile}…`,
+      () => this.sharedPreferences.selectFile(preferences.selectedFile!),
+      'prefs-open',
+      'Preferences ready',
+    );
+  }
+
+  private async prefsSelectPackage(packageName: string): Promise<void> {
+    this.state.preferences = await this.busy(
+      `Opening ${packageName}…`,
+      () => this.sharedPreferences.selectPackage(packageName),
+      'prefs-package',
+      'App preferences loaded',
+    );
+  }
+
+  private async prefsSelectFile(fileName: string): Promise<void> {
+    this.state.preferences = await this.busy(
+      `Pulling ${fileName}…`,
+      () => this.sharedPreferences.selectFile(fileName),
+      'prefs-file',
+      'Preferences ready',
+    );
+  }
+
+  private async prefsSetEntry(key: string, valueType: PrefValueType, value: string): Promise<void> {
+    this.state.preferences = await this.busy(
+      `Updating ${key || 'preference'}…`,
+      () => this.sharedPreferences.setEntry(key, valueType, value),
+      'prefs-set',
+      'Preference updated',
+    );
+  }
+
+  private async prefsDeleteEntry(key: string): Promise<void> {
+    this.state.preferences = await this.busy(
+      `Deleting ${key || 'preference'}…`,
+      () => this.sharedPreferences.deleteEntry(key),
+      'prefs-delete',
+      'Preference deleted',
+    );
+  }
+
+  private async prefsPush(): Promise<void> {
+    this.state.preferences = await this.busy(
+      'Pushing preferences…',
+      () => this.sharedPreferences.push(),
+      'prefs-push',
+      'Preferences pushed',
+    );
+  }
+
   private async refreshAppPackages(serialHint = ''): Promise<void> {
     const serial = serialHint || await this.chooseDevice();
     if (!serial) throw new Error('Connect or start an Android device first.');
@@ -1563,12 +1669,14 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       linkResult: _result,
       operation: _operation,
       database: _database,
+      preferences: _preferences,
       appDataMessage: _appDataMessage,
       appPermissions: _appPermissions,
       appPermissionsSerial: _appPermissionsSerial,
       appPermissionsPackage: _appPermissionsPackage,
       initializing: _initializing,
       databaseScanning: _databaseScanning,
+      preferencesScanning: _preferencesScanning,
       appPackagesScanning: _appPackagesScanning,
       testOpenSections: _testOpenSections,
       projectRootMessage: _projectRootMessage,
