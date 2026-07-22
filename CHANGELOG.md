@@ -2,6 +2,47 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.13 - 2026-07-22
+
+### Changed
+
+- Location route modes use distinct walk / run / cycle / drive icons in the mode segment.
+- Inspector remembers the selected device across rerenders.
+- Expand All / Collapse All leave the Toolchain section unchanged.
+- Project root empty-state copy points users to configure the project root above.
+
+## 0.1.12 - 2026-07-20
+
+### Added
+
+- Broader App data permission grants: contacts, calendar, phone, nearby devices, and activity recognition.
+
+### Fixed
+
+- Permission action buttons wrap cleanly when the panel is narrow.
+
+## 0.1.11 - 2026-07-20
+
+### Changed
+
+- Project root configuration uses a native folder picker from the Build section instead of opening VS Code settings.
+
+### Fixed
+
+- Crash when resolving or updating the configured project root.
+
+## 0.1.10 - 2026-07-20
+
+### Added
+
+- Optional `androidCli.activity` setting to launch a specific activity after install; empty uses the variant MAIN/LAUNCHER activity.
+- Manifest launch-activity discovery so Run matches Android Studio's Default Activity behavior when possible.
+- Richer App data permission state parsing for grant/revoke status on the selected device.
+
+### Changed
+
+- Project root control in Build shows the resolved path and opens configuration from the panel.
+
 ## 0.1.9 - 2026-07-18
 
 ### Added
@@ -12,6 +53,7 @@ All notable changes to Android Command Center are documented here.
 - Screen recording in Inspector with stop-and-save to a chosen destination.
 - Performance vitals monitor: FPS, jank, memory, slow frames, sparkline, reset, and raw dump.
 - Expand All / Collapse All icon actions in the Android Command Center view header.
+- `androidCli.projectRoot` for nested Android apps: open a parent monorepo folder and point the panel at the Gradle project that contains `gradlew`.
 
 ## 0.1.8 - 2026-07-16
 
