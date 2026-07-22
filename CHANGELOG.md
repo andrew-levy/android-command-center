@@ -2,6 +2,13 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.14 - 2026-07-22
+
+### Changed
+
+- Project root empty-state copy points users to configure the project root above.
+- README and release notes catch up nested project-root, launch-activity, and recent panel changes.
+
 ## 0.1.13 - 2026-07-22
 
 ### Changed
@@ -9,7 +16,6 @@ All notable changes to Android Command Center are documented here.
 - Location route modes use distinct walk / run / cycle / drive icons in the mode segment.
 - Inspector remembers the selected device across rerenders.
 - Expand All / Collapse All leave the Toolchain section unchanged.
-- Project root empty-state copy points users to configure the project root above.
 
 ## 0.1.12 - 2026-07-20
 
