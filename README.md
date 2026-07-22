@@ -29,7 +29,7 @@ Android Command Center uses the tools installed in the environment where its VS 
 - A project Gradle wrapper (`gradlew` or `gradlew.bat`) for Sync, Run, and Clean
 - SQLite 3 (`sqlite3`) for Database inspection
 
-The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths. When the workspace folder is not the Gradle project root, choose it with the Project gear or set `androidCli.projectRoot` directly.
+The dashboard detects each dependency and offers setup actions when one is unavailable. You can also set `androidCli.executable`, `androidCli.adbExecutable`, and `androidCli.sqliteExecutable` to absolute paths. When the workspace folder is not the Gradle project root, choose it with the Project gear.
 
 ## Features
 
