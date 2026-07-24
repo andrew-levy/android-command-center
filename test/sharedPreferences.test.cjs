@@ -7,6 +7,7 @@ const {
   normalizePrefValue,
   parseSharedPreferencesXml,
   serializeSharedPreferencesXml,
+  shellSingleQuote,
 } = require('../dist/sharedPreferencesInspector.js');
 
 const SAMPLE_XML = `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
@@ -61,4 +62,13 @@ test('preference value normalization validates types', () => {
   assert.throws(() => normalizePrefValue('int', '1.5'), /whole number/);
   assert.equal(formatPrefValue('float', 2), '2.0');
   assert.equal(formatPrefValue('set', ['one', 'two']), 'one\ntwo');
+});
+
+test('run-as shell commands remain one quoted argument through adb shell', () => {
+  const command = "mkdir -p shared_prefs && cat > 'shared_prefs/fixture.xml'";
+  const quoted = shellSingleQuote(command);
+  assert.equal(quoted[0], "'");
+  assert.equal(quoted.at(-1), "'");
+  assert.match(quoted, /mkdir -p shared_prefs && cat >/);
+  assert.match(quoted, /'\\''shared_prefs\/fixture\.xml'\\'''/);
 });

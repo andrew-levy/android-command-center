@@ -8,6 +8,8 @@ import { DatabaseInspector, emptyDatabaseState, type DatabaseInspectorState } fr
 import {
   SharedPreferencesInspector,
   emptySharedPreferencesState,
+  formatPrefValue,
+  normalizePrefValue,
   type PrefValueType,
   type SharedPreferencesInspectorState,
 } from './sharedPreferencesInspector';
@@ -55,7 +57,6 @@ const SCREEN_RECORD_REMOTE = '/sdcard/Download/acc-screenrecord.mp4';
 const REFRESH_CHECK_TIMEOUT_MS = 12_000;
 const LAYOUT_BOUNDS_POKE_CODE = 1599295570;
 const PERFORMANCE_POLL_MS = 1_000;
-const MIN_BUSY_MS = 2_000;
 const SUCCESS_ENTER_MS = 220;
 const SUCCESS_HOLD_MS = 2_000;
 const SUCCESS_EXIT_MS = 180;
@@ -131,6 +132,8 @@ type DashboardState = {
   screenshot?: string;
   screenshotSaved?: boolean;
   recording?: { serial: string; active: boolean };
+  logcatRunning?: boolean;
+  logcatSerial?: string;
   performance: PerformanceState;
   linkResult?: LinkResult;
   operation?: Operation;
@@ -179,6 +182,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   private lastProjectRootKey?: string;
   private screenRecordProcess?: ChildProcess;
   private screenRecordSerial?: string;
+  private logcatTerminal?: vscode.Terminal;
   private performancePoll?: NodeJS.Timeout;
   private performanceSampling = false;
 
@@ -217,6 +221,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       appPackagesSerial: cached?.appPackagesSerial,
       selectedAppPackage: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
       appPermissions: [],
+      logcatRunning: false,
       performance: {
         serial: cached?.performance?.serial,
         packageName: context.workspaceState.get<string>(APP_PACKAGE_KEY) ?? cached?.selectedAppPackage,
@@ -227,6 +232,10 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       initializing: true,
       testOpenSections: process.env.ANDROID_CLI_TEST_OPEN_SECTIONS?.split(',').map((item) => item.trim()).filter(Boolean),
     };
+    context.subscriptions.push(
+      vscode.window.onDidCloseTerminal((terminal) => this.finishLogcat(terminal)),
+      vscode.window.onDidEndTerminalShellExecution((event) => this.finishLogcat(event.terminal)),
+    );
     this.applyProjectRootState(inspectProjectRoot(), false);
   }
 
@@ -254,6 +263,7 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.devicePoll = undefined;
     this.stopPerformanceMonitor();
     void this.stopScreenRecordProcess();
+    this.stopLogcat(false);
     void this.databases.dispose();
     void this.sharedPreferences.dispose();
     if (this.screenshotFile) void vscode.workspace.fs.delete(this.screenshotFile, { useTrash: false }).then(undefined, () => undefined);
@@ -434,11 +444,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         case 'layout': await this.layout(String(message.serial ?? '')); return;
         case 'location': await this.location(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
         case 'location-path': await this.pathLocation(String(message.serial), Number(message.latitude), Number(message.longitude)); return;
-        case 'logcat': {
-          const serial = String(message.serial ?? '').trim();
-          if (!serial) throw new Error('Connect or start an Android device first.');
-          return void this.terminal('Logcat', [adb(), '-s', serial, 'logcat']);
-        }
+        case 'logcat-start': this.startLogcat(String(message.serial ?? '')); return;
+        case 'logcat-stop': this.stopLogcat(); return;
         case 'db-refresh': await this.dbRefresh(String(message.serial ?? '')); return;
         case 'db-open': await this.dbOpen(); return;
         case 'db-package': await this.dbSelectPackage(String(message.packageName ?? '')); return;
@@ -451,7 +458,6 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
           String(message.column ?? ''),
           message.value === null || message.value === undefined ? null : String(message.value),
         ); return;
-        case 'db-push': await this.dbPush(); return;
         case 'prefs-refresh': await this.prefsRefresh(String(message.serial ?? '')); return;
         case 'prefs-open': await this.prefsOpen(); return;
         case 'prefs-package': await this.prefsSelectPackage(String(message.packageName ?? '')); return;
@@ -460,9 +466,9 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
           String(message.key ?? ''),
           String(message.valueType ?? 'string') as PrefValueType,
           String(message.value ?? ''),
+          message.originalKey === undefined ? undefined : String(message.originalKey),
         ); return;
         case 'prefs-delete': await this.prefsDeleteEntry(String(message.key ?? '')); return;
-        case 'prefs-push': await this.prefsPush(); return;
         case 'app-packages': await this.refreshAppPackages(String(message.serial ?? '')); return;
         case 'app-package': await this.selectAppPackage(String(message.packageName ?? '')); return;
         case 'app-clear-cache': await this.clearAppCache(String(message.serial ?? ''), String(message.packageName ?? '')); return;
@@ -478,6 +484,11 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       }
       this.showError(messageOf(error));
       this.state.busy = undefined;
+      this.render();
+    } finally {
+      // Some actions assign the value returned by busy() after busy's own
+      // completion render. Render once more after the handler has committed
+      // that state so the visible change and success feedback stay in sync.
       this.render();
     }
   }
@@ -1083,21 +1094,31 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   }
 
   private async dbUpdateCell(table: string, rowid: string, column: string, value: string | null): Promise<void> {
-    this.state.database = await this.busy(
-      `Updating ${column}…`,
-      () => this.databases.updateCell(table, rowid, column, value),
-      'db-cell',
-      'Cell updated',
-    );
-  }
-
-  private async dbPush(): Promise<void> {
-    this.state.database = await this.busy(
-      'Pushing database…',
-      () => this.databases.push(),
-      'db-push',
-      'Database pushed',
-    );
+    const previous = this.state.database;
+    const result = previous.result;
+    const columns = result?.columns ?? [];
+    const rowidIndex = columns.indexOf('__rowid__');
+    const columnIndex = columns.indexOf(column);
+    const rows = result?.rows.map((row) => (
+      rowidIndex >= 0 && columnIndex >= 0 && String(row[rowidIndex]) === rowid
+        ? row.map((cell, index) => index === columnIndex ? value : cell)
+        : row
+    ));
+    this.clearError(false);
+    this.state.database = {
+      ...previous,
+      result: result && rows ? { ...result, rows } : result,
+      saving: true,
+      message: `Applying ${column}…`,
+    };
+    this.render();
+    try {
+      this.state.database = await this.databases.updateCell(table, rowid, column, value);
+      this.render();
+    } catch (error) {
+      this.state.database = previous;
+      throw error;
+    }
   }
 
   private async prefsRefresh(serialHint = ''): Promise<void> {
@@ -1153,31 +1174,54 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     );
   }
 
-  private async prefsSetEntry(key: string, valueType: PrefValueType, value: string): Promise<void> {
-    this.state.preferences = await this.busy(
-      `Updating ${key || 'preference'}…`,
-      () => this.sharedPreferences.setEntry(key, valueType, value),
-      'prefs-set',
-      'Preference updated',
-    );
+  private async prefsSetEntry(
+    key: string,
+    valueType: PrefValueType,
+    value: string,
+    originalKey?: string,
+  ): Promise<void> {
+    const previous = this.state.preferences;
+    const trimmedKey = key.trim();
+    const trimmedOriginalKey = originalKey?.trim();
+    const formattedValue = formatPrefValue(valueType, normalizePrefValue(valueType, value));
+    let entries = previous.entries.filter((entry) => entry.key !== (trimmedOriginalKey || trimmedKey));
+    entries.push({ key: trimmedKey, type: valueType, value: formattedValue });
+    entries.sort((a, b) => a.key.localeCompare(b.key));
+    this.clearError(false);
+    this.state.preferences = {
+      ...previous,
+      entries,
+      saving: true,
+      message: `Saving ${trimmedKey}…`,
+    };
+    this.render();
+    try {
+      this.state.preferences = await this.sharedPreferences.setEntry(key, valueType, value, originalKey);
+      this.render();
+    } catch (error) {
+      this.state.preferences = previous;
+      throw error;
+    }
   }
 
   private async prefsDeleteEntry(key: string): Promise<void> {
-    this.state.preferences = await this.busy(
-      `Deleting ${key || 'preference'}…`,
-      () => this.sharedPreferences.deleteEntry(key),
-      'prefs-delete',
-      'Preference deleted',
-    );
-  }
-
-  private async prefsPush(): Promise<void> {
-    this.state.preferences = await this.busy(
-      'Pushing preferences…',
-      () => this.sharedPreferences.push(),
-      'prefs-push',
-      'Preferences pushed',
-    );
+    const previous = this.state.preferences;
+    const trimmedKey = key.trim();
+    this.clearError(false);
+    this.state.preferences = {
+      ...previous,
+      entries: previous.entries.filter((entry) => entry.key !== trimmedKey),
+      saving: true,
+      message: `Deleting ${trimmedKey}…`,
+    };
+    this.render();
+    try {
+      this.state.preferences = await this.sharedPreferences.deleteEntry(key);
+      this.render();
+    } catch (error) {
+      this.state.preferences = previous;
+      throw error;
+    }
   }
 
   private async refreshAppPackages(serialHint = ''): Promise<void> {
@@ -1307,10 +1351,43 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     return { serial, packageName };
   }
 
-  private terminal(name: string, command: string[], cwd?: string): void {
+  private startLogcat(serialHint: string): void {
+    const serial = serialHint.trim();
+    if (!serial) throw new Error('Connect or start an Android device first.');
+    if (this.logcatTerminal) {
+      this.logcatTerminal.show();
+      return;
+    }
+    this.logcatTerminal = this.terminal('Logcat', [
+      adb(), '-s', serial, 'logcat', '-v', 'long', '-v', 'color',
+    ]);
+    this.state.logcatRunning = true;
+    this.state.logcatSerial = serial;
+    this.render();
+  }
+
+  private finishLogcat(terminal: vscode.Terminal): void {
+    if (terminal !== this.logcatTerminal) return;
+    this.logcatTerminal = undefined;
+    this.state.logcatRunning = false;
+    this.state.logcatSerial = undefined;
+    this.render();
+  }
+
+  private stopLogcat(render = true): void {
+    const terminal = this.logcatTerminal;
+    this.logcatTerminal = undefined;
+    this.state.logcatRunning = false;
+    this.state.logcatSerial = undefined;
+    terminal?.dispose();
+    if (render) this.render();
+  }
+
+  private terminal(name: string, command: string[], cwd?: string): vscode.Terminal {
     const terminal = vscode.window.createTerminal({ name, cwd });
     terminal.show();
     terminal.sendText(command.map(shellQuote).join(' '));
+    return terminal;
   }
 
   private prepareInstallCli(): void {
@@ -1399,7 +1476,6 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
   }
 
   private async busy<T>(label: string, action: () => Promise<T>, id = 'busy', success: string | ((result: T) => string) = 'Done'): Promise<T> {
-    const startedAt = Date.now();
     const sequence = ++this.operationSequence;
     this.state.busy = label;
     this.state.operation = { id, status: 'running', message: label };
@@ -1407,7 +1483,6 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
     this.render();
     try {
       const result = await action();
-      await this.waitForMinimumBusyTime(startedAt);
       if (sequence === this.operationSequence) this.showOperationSuccess(id, typeof success === 'function' ? success(result) : success);
       return result;
     } catch (error) {
@@ -1415,7 +1490,6 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
         if (sequence === this.operationSequence) this.state.operation = undefined;
         throw error;
       }
-      await this.waitForMinimumBusyTime(startedAt);
       if (sequence === this.operationSequence) {
         this.showOperationError(id, messageOf(error));
       }
@@ -1434,11 +1508,6 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       this.state.operation = { ...this.state.operation, message: label };
     }
     this.render();
-  }
-
-  private async waitForMinimumBusyTime(startedAt: number): Promise<void> {
-    const remaining = MIN_BUSY_MS - (Date.now() - startedAt);
-    if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
   }
 
   private showOperationSuccess(id: string, message: string): void {
@@ -1664,6 +1733,8 @@ class DashboardProvider implements vscode.WebviewViewProvider, vscode.Disposable
       screenshot: _screenshot,
       screenshotSaved: _screenshotSaved,
       recording: _recording,
+      logcatRunning: _logcatRunning,
+      logcatSerial: _logcatSerial,
       deviceControls: _deviceControls,
       performance: performanceState,
       linkResult: _result,

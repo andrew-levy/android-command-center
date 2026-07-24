@@ -158,9 +158,10 @@ Happy paths:
 
 - scan a debuggable running app, select database/table, and read seeded rows;
 - verify the 200-row cap and truncation message;
+- run a smaller custom limit, edit a visible row, and verify the same limited result set remains visible;
 - run read-only SQL, syntax-error SQL, insert/update/delete, and schema-changing SQL;
 - edit text, number, empty string, quoted text, Unicode, and NULL cells;
-- push, force-stop/relaunch the app, and verify the changed value in-app.
+- verify automatic apply, then force-stop/relaunch the app and verify the changed value in-app.
 
 Edge paths:
 
@@ -170,13 +171,15 @@ Edge paths:
 - package uninstall or device disconnect during pull/query/push;
 - identifiers with spaces/reserved words and attempted edits without a usable rowid.
 
-### Preferences
+### Shared Preferences
 
 Happy paths:
 
 - scan a debuggable app, select a SharedPreferences XML file, and read typed key/value rows;
 - edit string, boolean, int, long, float, and set values;
-- add a new key and delete an existing key, then verify push succeeds;
+- rename a key and change its type with the inline row editor;
+- switch a boolean key to another type and verify its `true` / `false` value is cleared;
+- add a new key and delete an existing key, then verify each background save succeeds;
 - force-stop/relaunch the app and verify changed values after reload.
 
 Edge paths:

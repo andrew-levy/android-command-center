@@ -7,6 +7,7 @@ const {
  canUseDeviceControls,
  matchAvdDevices,
  parseCoords,
+ preferenceValueAfterTypeChange,
  restoreOpenSections,
  FONT_SCALE_PRESETS,
  ROTATION_PRESETS,
@@ -54,7 +55,7 @@ const iconShapes={
 };
 const icon=(name,className='')=>iconShapes[name]?'<svg class="ui-icon'+(className?' '+className:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+iconShapes[name]+'</svg>':'';
 const sectionIcons={build:'build',device:'devices',deeplinks:'deeplinks',inspector:'inspector',performance:'performance',database:'database',preferences:'preferences',appdata:'appdata',location:'location',stream:'stream'};
-const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash',logcat:'terminal',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','db-push':'upload','prefs-refresh':'refresh','prefs-push':'upload','prefs-add':'plus','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
+const actionIcons={'build-run':'play','gradle-sync':'refresh',clean:'trash','logcat-start':'terminal','logcat-stop':'stop',location:'crosshair','screenshot-save':'save','emulator-create':'plus','performance-start':'play','performance-stop':'stop','performance-reset':'refresh','performance-dump':'braces','db-refresh':'refresh','db-query':'play','prefs-refresh':'refresh','prefs-add':'plus','app-packages':'refresh','app-force-stop':'stop','app-clear-cache':'eraser','app-clear-data':'trash'};
 const performanceMetricFrames=new Map();
 const SHOW_PERFORMANCE=false;
 let state={devices:[],emulators:[],emulatorProfiles:[],variants:[],appPackages:[],database:{processes:[],databases:[],tables:[],query:'',dirty:false},preferences:{processes:[],files:[],entries:[],dirty:false},cliAvailable:false,cliStatus:'checking',adbStatus:'checking',sqliteStatus:'checking',initializing:true};
@@ -66,6 +67,8 @@ let openSections=new Set(restoreOpenSections(savedUi,uiVersion));
 let testOpenSectionsApplied=false;
 let deepLinkDraft=savedUi.deepLinkDraft||'';
 let sqlDraft=savedUi.sqlDraft||'';
+let dbCellEditor=null;
+let preferenceEditor=null;
 let runTargetMenuOpen=Boolean(savedUi.runTargetMenuOpen);
 let streamSerial = savedUi.streamSerial || '';
 let inspectorSerial = savedUi.inspectorSerial || '';
@@ -99,7 +102,7 @@ window.addEventListener('message',({data})=>{
   state=data.state;
   if(!testOpenSectionsApplied&&Array.isArray(state.testOpenSections)){openSections=new Set(state.testOpenSections);testOpenSectionsApplied=true}
   if(!deepLinkDraft&&state.deepLinkPrefixes?.length)deepLinkDraft=state.deepLinkPrefixes[0];
-  if(state.database?.query!=null&&document.activeElement?.id!=='db-sql')sqlDraft=state.database.query;
+  if(state.database?.query!=null&&document.activeElement?.id!=='db-sql'&&state.operation?.id!=='db-query')sqlDraft=state.database.query;
   render();
  }
  if(data.type==='performance-state'){
@@ -138,7 +141,8 @@ function render(){
  const database=databaseSection(optionsFor(state.database?.serial),adbReady,sqliteReady);
  const preferences=preferencesSection(optionsFor(state.preferences?.serial),adbReady);
  const appData=appDataSection(optionsFor(state.appPackagesSerial),adbReady);
- const stream=section('stream','Stream','Logcat',group(row('Device',selectWrap('stream-device',optionsFor(streamSerial),{disabled:!online.length,label:'Logcat device'}),'','Log source')+row('Device logs',actionButton('logcat','Start','secondary compact',!adbReady||!online.length),'','Live Logcat output')));
+ const logcatRunning=Boolean(state.logcatRunning);
+ const stream=section('stream','Stream','Logcat',group(row('Device',selectWrap('stream-device',optionsFor(streamSerial),{disabled:logcatRunning||!online.length,label:'Logcat device'}),'','Log source')+row('Device logs',actionButton(logcatRunning?'logcat-stop':'logcat-start',logcatRunning?'Stop':'Start',logcatRunning?'danger compact':'secondary compact',!logcatRunning&&(!adbReady||!online.length)),'',logcatRunning?'Stop the live stream':'Color-coded readable blocks')));
  const loadingToast=state.initializing?'<div class="loading-toast" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Loading tools, devices, and app data…</span></div>':'';
  const errorToast=state.error?'<div class="error-toast'+(state.errorExiting?' exiting':'')+'" role="alert" aria-live="assertive"><span class="error-toast-icon" aria-hidden="true">!</span><span class="error-toast-message">'+esc(state.error)+'</span><button class="error-toast-close" id="dismiss-error" type="button" aria-label="Dismiss error">×</button></div>':'';
  app.innerHTML=(state.busy?'<div class="busybar"><span>'+esc(state.busy)+'</span></div>':'')+loadingToast+errorToast+build+device+deepLinkSection(deviceOptions,adbReady)+inspector+performance+database+preferences+appData+locationSection(locationOptions,adbReady)+stream+toolchainSection();
@@ -411,7 +415,7 @@ function databaseSection(deviceOptions,adbReady,sqliteReady){
  const db=state.database||{processes:[],databases:[],tables:[],query:'',dirty:false};
  if(db.query&&!sqlDraft)sqlDraft=db.query;
  const processes=db.processes||[];
- const status=state.databaseScanning?'Scanning…':!sqliteReady?'Needs SQLite':db.dirty?'Unsaved push':db.selectedDatabase?db.selectedDatabase:processes.length?countLabel(processes.length,'app'):'Debuggable';
+ const status=state.databaseScanning?'Scanning…':!sqliteReady?'Needs SQLite':db.saving?'Applying…':db.selectedDatabase?db.selectedDatabase:processes.length?countLabel(processes.length,'app'):'Debuggable';
  const processOptions=processes.length
   ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===db.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
   :'<option value="">Scan debuggable apps</option>';
@@ -419,22 +423,22 @@ function databaseSection(deviceOptions,adbReady,sqliteReady){
  const tableOptions=(db.tables||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===db.selectedTable?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No user tables</option>';
  const footerMessage=db.result?(db.message||db.result.message||countLabel(db.result.rows?.length||0,'row')):(db.message||'');
  const result=db.result
-  ?databaseResult(db.result,db.selectedTable)
+  ?databaseResult(db.result,db.selectedTable,Boolean(db.saving))
   :'<p class="muted">Select an app to inspect its SQLite databases. Requires a debuggable build.</p>';
  const controls=group(
-   row('Device',selectWrap('db-device',deviceOptions,{disabled:state.databaseScanning,label:'Database device'}),'','Query target')
-   +row('App',selectWrap('db-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}),'','Debuggable process')
-   +row('Database',selectWrap('db-database',dbOptions,{disabled:!(db.databases?.length),label:'Database'}),'','On-device SQLite')
-   +row('Table',selectWrap('db-table',tableOptions,{disabled:!(db.tables?.length),label:'Database table'}),'','Table to inspect')
+   row('Device',selectWrap('db-device',deviceOptions,{disabled:state.databaseScanning||db.saving,label:'Database device'}),'','Query target')
+   +row('App',selectWrap('db-package',processOptions,{disabled:!processes.length||db.saving,label:'Debuggable app'}),'','Debuggable process')
+   +row('Database',selectWrap('db-database',dbOptions,{disabled:!(db.databases?.length)||db.saving,label:'Database'}),'','On-device SQLite')
+   +row('Table',selectWrap('db-table',tableOptions,{disabled:!(db.tables?.length)||db.saving,label:'Database table'}),'','Table to inspect')
   )
-  +'<textarea id="db-sql" rows="4" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM table LIMIT 50;">'+esc(sqlDraft||db.query||'')+'</textarea>'
-  +'<div class="action-strip">'+actionButton('db-query','Run query','primary',!db.selectedDatabase)+actionButton('db-push','Push','secondary',!db.dirty)+'</div>'
+  +'<textarea id="db-sql" rows="4" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM table LIMIT 50;"'+(db.saving?' disabled':'')+'>'+esc(sqlDraft||db.query||'')+'</textarea>'
+  +'<div class="action-strip">'+actionButton('db-query','Run query','primary',!db.selectedDatabase||Boolean(dbCellEditor)||Boolean(db.saving))+'</div>'
   +(db.error?'<div class="location-error">'+esc(db.error)+'</div>':'')+result
-  +sectionFooter(footerMessage,'db-refresh',!adbReady||!sqliteReady,state.databaseScanning);
+  +sectionFooter(footerMessage,'db-refresh',!adbReady||!sqliteReady||Boolean(db.saving),state.databaseScanning);
  return section('database','Database',esc(status),controls);
 }
 
-function databaseResult(result,table){
+function databaseResult(result,table,saving=false){
  const columns=result.columns||[],rows=result.rows||[];
  if(!columns.length&&!rows.length)return '';
  const head='<tr>'+columns.map((column)=>'<th>'+esc(column==='__rowid__'?'rowid':column)+'</th>').join('')+'</tr>';
@@ -442,9 +446,18 @@ function databaseResult(result,table){
   const rowid=columns.includes('__rowid__')?row[columns.indexOf('__rowid__')]:'';
   return '<tr>'+row.map((cell,index)=>{
    const column=columns[index];
-   const editable=table&&rowid!==''&&rowid!=null&&column&&column!=='__rowid__';
+   const editable=!saving&&table&&rowid!==''&&rowid!=null&&column&&column!=='__rowid__';
+   const editing=editable&&dbCellEditor&&dbCellEditor.table===table&&String(dbCellEditor.rowid)===String(rowid)&&dbCellEditor.column===column;
    const display=cell===null?'NULL':cell;
-   return '<td class="'+(cell===null?'db-null':'')+(editable?' db-editable':'')+'"'+(editable?' data-db-cell data-rowid="'+esc(rowid)+'" data-column="'+esc(column)+'" data-table="'+esc(table)+'" title="Click to edit"':'')+'>'+esc(display)+'</td>';
+   if(editing){
+    return '<td class="db-editing"><div class="inline-cell-editor">'
+     +'<input class="inline-cell-input" data-db-edit-input value="'+esc(dbCellEditor.value)+'" aria-label="Value for '+esc(column)+'"'+(dbCellEditor.isNull?' disabled':'')+'>'
+     +'<label class="inline-null-toggle"><input type="checkbox" data-db-edit-null'+(dbCellEditor.isNull?' checked':'')+'>NULL</label>'
+     +'<button class="inline-save" data-db-edit-save type="button" title="Save local edit" aria-label="Save local edit">✓</button>'
+     +'<button class="inline-cancel" data-db-edit-cancel type="button" title="Cancel edit" aria-label="Cancel edit">×</button>'
+     +'</div></td>';
+   }
+   return '<td class="'+(cell===null?'db-null':'')+(editable?' db-editable':'')+'"'+(editable?' data-db-cell data-rowid="'+esc(rowid)+'" data-column="'+esc(column)+'" data-table="'+esc(table)+'" data-value="'+esc(cell??'')+'" data-null="'+(cell===null?'1':'0')+'" title="Click to edit"':'')+'>'+esc(display)+'</td>';
   }).join('')+'</tr>';
  }).join('');
  return '<div class="db-result"><div class="db-table-wrap" data-preserve-scroll="database-result"><table class="db-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
@@ -453,39 +466,56 @@ function databaseResult(result,table){
 function preferencesSection(deviceOptions,adbReady){
  const prefs=state.preferences||{processes:[],files:[],entries:[],dirty:false};
  const processes=prefs.processes||[];
- const status=state.preferencesScanning?'Scanning…':prefs.dirty?'Unsaved push':prefs.selectedFile?prefs.selectedFile:processes.length?countLabel(processes.length,'app'):'Debuggable';
+ const status=state.preferencesScanning?'Scanning…':prefs.saving?'Saving…':prefs.selectedFile?prefs.selectedFile:processes.length?countLabel(processes.length,'app'):'Debuggable';
  const processOptions=processes.length
   ?processes.map((item)=>'<option value="'+esc(item.packageName)+'"'+(item.packageName===prefs.packageName?' selected':'')+'>'+esc(item.label||item.packageName)+'</option>').join('')
   :'<option value="">Scan debuggable apps</option>';
  const fileOptions=(prefs.files||[]).map((name)=>'<option value="'+esc(name)+'"'+(name===prefs.selectedFile?' selected':'')+'>'+esc(name)+'</option>').join('')||'<option value="">No preference files</option>';
  const footerMessage=prefs.message||(prefs.entries?.length?countLabel(prefs.entries.length,'key'):'');
  const result=prefs.localPath||prefs.entries?.length
-  ?preferencesResult(prefs.entries||[])
+  ?preferencesResult(prefs.entries||[],Boolean(prefs.saving))
   :'<p class="muted">Select an app to inspect its SharedPreferences. Requires a debuggable build.</p>';
  const controls=group(
-   row('Device',selectWrap('prefs-device',deviceOptions,{disabled:state.preferencesScanning,label:'Preferences device'}),'','Query target')
-   +row('App',selectWrap('prefs-package',processOptions,{disabled:!processes.length,label:'Debuggable app'}),'','Debuggable process')
-   +row('File',selectWrap('prefs-file',fileOptions,{disabled:!(prefs.files?.length),label:'Preferences file'}),'','shared_prefs XML')
+   row('Device',selectWrap('prefs-device',deviceOptions,{disabled:state.preferencesScanning||prefs.saving,label:'Shared Preferences device'}),'','Query target')
+   +row('App',selectWrap('prefs-package',processOptions,{disabled:!processes.length||prefs.saving,label:'Debuggable app'}),'','Debuggable process')
+   +row('File',selectWrap('prefs-file',fileOptions,{disabled:!(prefs.files?.length)||prefs.saving,label:'Shared Preferences file'}),'','shared_prefs XML')
   )
-  +'<div class="action-strip">'+actionButton('prefs-add','Add key','secondary',!prefs.selectedFile)+actionButton('prefs-push','Push','secondary',!prefs.dirty)+'</div>'
+  +'<div class="action-strip">'+actionButton('prefs-add','Add key','secondary',!prefs.selectedFile||Boolean(preferenceEditor)||Boolean(prefs.saving))+'</div>'
   +(prefs.error?'<div class="location-error">'+esc(prefs.error)+'</div>':'')+result
-  +sectionFooter(footerMessage,'prefs-refresh',!adbReady,state.preferencesScanning);
- return section('preferences','Preferences',esc(status),controls);
+  +sectionFooter(footerMessage,'prefs-refresh',!adbReady||Boolean(prefs.saving),state.preferencesScanning);
+ return section('preferences','Shared Preferences',esc(status),controls);
 }
 
-function preferencesResult(entries){
- if(!entries.length)return '<p class="muted">This preferences file is empty.</p>';
+function preferencesResult(entries,saving=false){
+ if(!entries.length&&!preferenceEditor)return '<p class="muted">This preferences file is empty. Use Add key to create the first entry.</p>';
  const head='<tr><th>Key</th><th>Type</th><th>Value</th><th></th></tr>';
  const body=entries.map((entry)=>{
+  if(preferenceEditor&&!preferenceEditor.isNew&&preferenceEditor.originalKey===entry.key)return preferenceEditorRow(preferenceEditor);
   const display=entry.type==='set'?(entry.value||'').split(/\r?\n/).filter(Boolean).join(', '):entry.value;
+  const editAttrs=saving?'':' data-prefs-edit="'+esc(entry.key)+'"';
   return '<tr>'
-   +'<td title="'+esc(entry.key)+'">'+esc(entry.key)+'</td>'
-   +'<td class="prefs-type">'+esc(entry.type)+'</td>'
-   +'<td class="db-editable" data-prefs-cell data-key="'+esc(entry.key)+'" data-type="'+esc(entry.type)+'" title="Click to edit">'+esc(display)+'</td>'
-   +'<td class="prefs-actions"><button class="text-button" data-prefs-delete="'+esc(entry.key)+'" type="button" title="Delete key">Delete</button></td>'
+   +'<td class="'+(saving?'':'db-editable')+'"'+editAttrs+' title="'+(saving?'Saving…':'Click to edit key')+'">'+esc(entry.key)+'</td>'
+   +'<td class="prefs-type '+(saving?'':'db-editable')+'"'+editAttrs+' title="'+(saving?'Saving…':'Click to edit type')+'">'+esc(entry.type)+'</td>'
+   +'<td class="'+(saving?'':'db-editable')+'"'+editAttrs+' title="'+(saving?'Saving…':'Click to edit value')+'">'+esc(display)+'</td>'
+   +'<td class="prefs-actions"><button class="text-button danger-text" data-prefs-delete="'+esc(entry.key)+'" type="button" title="Delete key"'+(saving?' disabled':'')+'>Delete</button></td>'
    +'</tr>';
- }).join('');
+ }).join('')+(preferenceEditor?.isNew?preferenceEditorRow(preferenceEditor):'');
  return '<div class="db-result"><div class="db-table-wrap" data-preserve-scroll="preferences-result"><table class="db-table prefs-table"><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div></div>';
+}
+
+function preferenceEditorRow(editor){
+ const typeOptions=['string','boolean','int','long','float','set'].map((type)=>'<option value="'+type+'"'+(type===editor.type?' selected':'')+'>'+type+'</option>').join('');
+ const valueControl=editor.type==='boolean'
+  ?'<select data-prefs-edit-value aria-label="Preference value"><option value="false"'+(editor.value==='false'?' selected':'')+'>false</option><option value="true"'+(editor.value==='true'?' selected':'')+'>true</option></select>'
+  :editor.type==='set'
+   ?'<textarea data-prefs-edit-value rows="2" aria-label="Preference values, one per line" placeholder="One value per line">'+esc(editor.value)+'</textarea>'
+   :'<input data-prefs-edit-value value="'+esc(editor.value)+'" aria-label="Preference value" spellcheck="false">';
+ return '<tr class="prefs-editor">'
+  +'<td><input data-prefs-edit-key value="'+esc(editor.key)+'" placeholder="Key" aria-label="Preference key" spellcheck="false"></td>'
+  +'<td><select data-prefs-edit-type aria-label="Preference type">'+typeOptions+'</select></td>'
+  +'<td>'+valueControl+'</td>'
+  +'<td class="prefs-actions"><button class="text-button inline-save-text" data-prefs-edit-save type="button">Save</button><button class="text-button" data-prefs-edit-cancel type="button">Cancel</button></td>'
+  +'</tr>';
 }
 
 function appDataSection(deviceOptions,adbReady){
@@ -562,7 +592,7 @@ function bind(){
  document.getElementById('dismiss-error')?.addEventListener('click',()=>send('error-dismiss'));
  app.querySelectorAll('[data-setup]').forEach((el)=>el.addEventListener('click',()=>send(el.dataset.setup)));
  app.querySelectorAll('details[data-section]').forEach((el)=>el.addEventListener('toggle',()=>{el.open?openSections.add(el.dataset.section):openSections.delete(el.dataset.section);if(el.open&&el.dataset.section==='database'&&state.database?.selectedDatabase&&!state.database?.localPath&&!state.databaseScanning)send('db-open');if(el.open&&el.dataset.section==='preferences'&&state.preferences?.selectedFile&&!state.preferences?.localPath&&!state.preferencesScanning)send('prefs-open');saveUi()}));
- app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated',serial:document.getElementById('inspector-device')?.value||''});else if(action==='screenshot-save')send('screenshot-save');else if(action==='layout')send('layout',{serial:document.getElementById('inspector-device')?.value||''});else if(action === 'logcat') send('logcat', { serial: document.getElementById('stream-device')?.value || '', });else if(action==='screen-record-start')send('screen-record-start',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh')send('db-refresh',{serial:document.getElementById('db-device')?.value||''});else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='db-push')send('db-push');else if(action==='prefs-refresh')send('prefs-refresh',{serial:document.getElementById('prefs-device')?.value||''});else if(action==='prefs-push')send('prefs-push');else if(action==='prefs-add')addPreferenceEntry();else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
+ app.querySelectorAll('[data-action]').forEach((el)=>el.addEventListener('click',()=>{const action=el.dataset.action;if(action==='screenshot'||action==='screenshot-annotated')send('screenshot',{annotate:action==='screenshot-annotated',serial:document.getElementById('inspector-device')?.value||''});else if(action==='screenshot-save')send('screenshot-save');else if(action==='layout')send('layout',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='logcat-start')send('logcat-start',{serial:document.getElementById('stream-device')?.value||''});else if(action==='logcat-stop')send('logcat-stop');else if(action==='screen-record-start')send('screen-record-start',{serial:document.getElementById('inspector-device')?.value||''});else if(action==='screen-record-stop')send('screen-record-stop');else if(action==='emulator-create')send('emulator-create',{profile:document.getElementById('emulator-profile')?.value||state.selectedEmulatorProfile||''});else if(action==='performance-start')send('performance-start',{serial:document.getElementById('perf-device')?.value||'',packageName:document.getElementById('perf-package')?.value||state.performance?.packageName||state.selectedAppPackage||''});else if(action==='performance-stop')send('performance-stop');else if(action==='performance-reset')send('performance-reset');else if(action==='performance-dump')send('performance-dump');else if(action==='location'){const parsed=parseCoords(document.getElementById('location-coords')?.value||'');if(!parsed)return;locationState.coords=document.getElementById('location-coords').value;send('location',{serial:locationState.serial,latitude:parsed.lat,longitude:parsed.lng})}else if(action==='db-refresh'){dbCellEditor=null;send('db-refresh',{serial:document.getElementById('db-device')?.value||''})}else if(action==='db-query'){sqlDraft=document.getElementById('db-sql')?.value||'';saveUi();send('db-query',{sql:sqlDraft})}else if(action==='prefs-refresh'){preferenceEditor=null;send('prefs-refresh',{serial:document.getElementById('prefs-device')?.value||''})}else if(action==='prefs-add')addPreferenceEntry();else if(action==='app-packages'||action==='app-clear-cache'||action==='app-clear-data'||action==='app-force-stop')send(action,{serial:document.getElementById('app-device')?.value||'',packageName:document.getElementById('app-package')?.value||state.selectedAppPackage||state.applicationId||''});else send(action,{serial:locationState.serial})}));
  document.getElementById('build-variant')?.addEventListener('change',(e)=>send('variant',{id:e.target.value}));
  document.getElementById('stream-device')?.addEventListener('change',(e)=>{streamSerial = e.target.value; saveUi()});
  document.getElementById('inspector-device')?.addEventListener('change',(e)=>{inspectorSerial=e.target.value;saveUi()});
@@ -592,17 +622,28 @@ function bind(){
  app.querySelectorAll('[data-stop]').forEach((el)=>el.addEventListener('click',()=>send('stop',{serial:el.dataset.stop})));
  app.querySelectorAll('[data-start]').forEach((el)=>el.addEventListener('click',()=>send('start',{name:el.dataset.start})));
  app.querySelectorAll('[data-theme]').forEach((el)=>el.addEventListener('click',()=>send('theme',{serial:el.dataset.serial,theme:el.dataset.theme})));
- document.getElementById('db-package')?.addEventListener('change',(e)=>send('db-package',{packageName:e.target.value}));
- document.getElementById('db-device')?.addEventListener('change',(e)=>send('db-refresh',{serial:e.target.value}));
- document.getElementById('db-database')?.addEventListener('change',(e)=>send('db-database',{database:e.target.value}));
- document.getElementById('db-table')?.addEventListener('change',(e)=>send('db-table',{table:e.target.value}));
+ document.getElementById('db-package')?.addEventListener('change',(e)=>{dbCellEditor=null;send('db-package',{packageName:e.target.value})});
+ document.getElementById('db-device')?.addEventListener('change',(e)=>{dbCellEditor=null;send('db-refresh',{serial:e.target.value})});
+ document.getElementById('db-database')?.addEventListener('change',(e)=>{dbCellEditor=null;send('db-database',{database:e.target.value})});
+ document.getElementById('db-table')?.addEventListener('change',(e)=>{dbCellEditor=null;send('db-table',{table:e.target.value})});
  document.getElementById('db-sql')?.addEventListener('input',(e)=>{sqlDraft=e.target.value;saveUi()});
  app.querySelectorAll('[data-db-cell]').forEach((el)=>el.addEventListener('click',()=>editDbCell(el)));
- document.getElementById('prefs-package')?.addEventListener('change',(e)=>send('prefs-package',{packageName:e.target.value}));
- document.getElementById('prefs-device')?.addEventListener('change',(e)=>send('prefs-refresh',{serial:e.target.value}));
- document.getElementById('prefs-file')?.addEventListener('change',(e)=>send('prefs-file',{fileName:e.target.value}));
- app.querySelectorAll('[data-prefs-cell]').forEach((el)=>el.addEventListener('click',()=>editPreferenceCell(el)));
- app.querySelectorAll('[data-prefs-delete]').forEach((el)=>el.addEventListener('click',()=>{const key=el.dataset.prefsDelete;if(!key)return;if(!window.confirm('Delete preference "'+key+'"?'))return;send('prefs-delete',{key})}));
+ document.querySelector('[data-db-edit-input]')?.addEventListener('input',(e)=>{if(dbCellEditor)dbCellEditor.value=e.target.value});
+ document.querySelector('[data-db-edit-input]')?.addEventListener('keydown',inlineDatabaseKeydown);
+ document.querySelector('[data-db-edit-null]')?.addEventListener('change',(e)=>{if(!dbCellEditor)return;dbCellEditor.isNull=e.target.checked;render();requestAnimationFrame(()=>document.querySelector('[data-db-edit-input]')?.focus())});
+ document.querySelector('[data-db-edit-save]')?.addEventListener('click',saveDbCell);
+ document.querySelector('[data-db-edit-cancel]')?.addEventListener('click',()=>{dbCellEditor=null;render()});
+ document.getElementById('prefs-package')?.addEventListener('change',(e)=>{preferenceEditor=null;send('prefs-package',{packageName:e.target.value})});
+ document.getElementById('prefs-device')?.addEventListener('change',(e)=>{preferenceEditor=null;send('prefs-refresh',{serial:e.target.value})});
+ document.getElementById('prefs-file')?.addEventListener('change',(e)=>{preferenceEditor=null;send('prefs-file',{fileName:e.target.value})});
+ app.querySelectorAll('[data-prefs-edit]').forEach((el)=>el.addEventListener('click',()=>editPreferenceEntry(el.dataset.prefsEdit)));
+ app.querySelectorAll('[data-prefs-delete]').forEach((el)=>el.addEventListener('click',()=>{const key=el.dataset.prefsDelete;if(!key)return;deletePreferenceEntry(key)}));
+ document.querySelector('[data-prefs-edit-key]')?.addEventListener('input',syncPreferenceEditor);
+ document.querySelector('[data-prefs-edit-value]')?.addEventListener('input',syncPreferenceEditor);
+ document.querySelector('[data-prefs-edit-type]')?.addEventListener('change',(e)=>changePreferenceType(e.target.value));
+ document.querySelector('.prefs-editor')?.addEventListener('keydown',inlinePreferenceKeydown);
+ document.querySelector('[data-prefs-edit-save]')?.addEventListener('click',savePreferenceEntry);
+ document.querySelector('[data-prefs-edit-cancel]')?.addEventListener('click',()=>{preferenceEditor=null;render()});
  document.getElementById('location-device')?.addEventListener('change',(e)=>{locationState.serial=e.target.value;if(!canPlayRoute(state.adbStatus==='ready',locationState.serial)&&locationState.status==='playing'){locationState.status='paused';locationState.error='Start and select an emulator to continue the route.'}render()});
  app.querySelectorAll('[data-location-view]').forEach((el)=>el.addEventListener('click',()=>{const view=el.dataset.locationView;if(view===locationState.view)return;if(view==='point'&&locationState.status==='playing')locationState.status='paused';locationState.view=view;saveUi();render()}));
  document.getElementById('location-coords')?.addEventListener('input',(e)=>{locationState.coords=e.target.value;const parsed=parseCoords(locationState.coords);if(parsed)syncMapSelection(parsed,true);updateLocationButton();updateLocationText()});
@@ -620,38 +661,143 @@ function bind(){
 
 function resetLocation(){locationState.status='idle';locationState.arc=0;locationState.elapsed=0;locationState.lastPush=0}
 function editDbCell(el){
- const current=el.textContent==='NULL'?'':el.textContent;
- const next=window.prompt('Edit '+el.dataset.column+' (use NULL for null)',current);
- if(next===null)return;
- const value=next.trim().toUpperCase()==='NULL'?null:next;
- send('db-cell',{table:el.dataset.table,rowid:el.dataset.rowid,column:el.dataset.column,value});
+ dbCellEditor={table:el.dataset.table,rowid:el.dataset.rowid,column:el.dataset.column,value:el.dataset.value||'',isNull:el.dataset.null==='1'};
+ render();
+ requestAnimationFrame(()=>{const input=document.querySelector('[data-db-edit-input]');input?.focus();input?.select()});
 }
 
-function editPreferenceCell(el){
- const type=el.dataset.type||'string';
- const key=el.dataset.key||'';
+function saveDbCell(){
+ if(!dbCellEditor)return;
+ const edit=dbCellEditor;
+ dbCellEditor=null;
+ const value=edit.isNull?null:edit.value;
+ const result=state.database?.result;
+ const columns=result?.columns||[];
+ const rowidIndex=columns.indexOf('__rowid__'),columnIndex=columns.indexOf(edit.column);
+ const rows=result?.rows.map((row)=>rowidIndex>=0&&columnIndex>=0&&String(row[rowidIndex])===String(edit.rowid)
+  ?row.map((cell,index)=>index===columnIndex?value:cell)
+  :row);
+ state.database={...state.database,result:result&&rows?{...result,rows}:result,saving:true,message:'Applying '+edit.column+'…'};
+ render();
+ send('db-cell',{table:edit.table,rowid:edit.rowid,column:edit.column,value});
+}
+
+function inlineDatabaseKeydown(event){
+ if(event.key==='Escape'){dbCellEditor=null;render();return}
+ if(event.key==='Enter'){event.preventDefault();saveDbCell()}
+}
+
+function editPreferenceEntry(key){
  const entry=(state.preferences?.entries||[]).find((item)=>item.key===key);
- const current=entry?.value??'';
- const hint=type==='set'?' (one value per line, or comma-separated)':type==='boolean'?' (true/false)':'';
- const next=window.prompt('Edit '+key+' as '+type+hint,current);
- if(next===null)return;
- send('prefs-set',{key,valueType:type,value:next});
+ if(!entry)return;
+ preferenceEditor={originalKey:entry.key,key:entry.key,type:entry.type,value:entry.value,isNew:false};
+ render();
+ requestAnimationFrame(()=>{const input=document.querySelector('[data-prefs-edit-key]');input?.focus();input?.select()});
 }
 
 function addPreferenceEntry(){
- const key=window.prompt('New preference key');
- if(key===null)return;
- const trimmed=key.trim();
- if(!trimmed)return;
- const type=(window.prompt('Type: string, boolean, int, long, float, or set','string')||'string').trim().toLowerCase();
- if(!['string','boolean','int','long','float','set'].includes(type)){
-  window.alert('Unsupported type. Use string, boolean, int, long, float, or set.');
+ preferenceEditor={originalKey:'',key:'',type:'string',value:'',isNew:true};
+ render();
+ requestAnimationFrame(()=>document.querySelector('[data-prefs-edit-key]')?.focus());
+}
+
+function syncPreferenceEditor(){
+ if(!preferenceEditor)return;
+ preferenceEditor.key=document.querySelector('[data-prefs-edit-key]')?.value||'';
+ preferenceEditor.value=document.querySelector('[data-prefs-edit-value]')?.value||'';
+}
+
+function changePreferenceType(type){
+ if(!preferenceEditor)return;
+ syncPreferenceEditor();
+ const previousType=preferenceEditor.type;
+ preferenceEditor.value=preferenceValueAfterTypeChange(previousType,type,preferenceEditor.value);
+ preferenceEditor.type=type;
+ render();
+ requestAnimationFrame(()=>document.querySelector('[data-prefs-edit-value]')?.focus());
+}
+
+function savePreferenceEntry(){
+ if(!preferenceEditor)return;
+ syncPreferenceEditor();
+ const keyInput=document.querySelector('[data-prefs-edit-key]');
+ const valueInput=document.querySelector('[data-prefs-edit-value]');
+ keyInput?.setCustomValidity('');
+ valueInput?.setCustomValidity('');
+ const issue=preferenceValidationIssue(preferenceEditor);
+ if(issue){
+  const input=issue.field==='key'?keyInput:valueInput;
+  input?.setCustomValidity(issue.message);
+  input?.reportValidity();
   return;
  }
- const hint=type==='set'?' (one value per line, or comma-separated)':type==='boolean'?' (true/false)':'';
- const value=window.prompt('Value for '+trimmed+' as '+type+hint,type==='boolean'?'false':type==='set'?'':'');
- if(value===null)return;
- send('prefs-set',{key:trimmed,valueType:type,value});
+ const edit=preferenceEditor;
+ preferenceEditor=null;
+ const value=optimisticPreferenceValue(edit.type,edit.value);
+ const entry={key:edit.key.trim(),type:edit.type,value};
+ const entries=(state.preferences?.entries||[]).filter((item)=>item.key!==(edit.originalKey||entry.key));
+ entries.push(entry);
+ entries.sort((a,b)=>a.key.localeCompare(b.key));
+ state.preferences={...state.preferences,entries,saving:true,message:'Saving '+entry.key+'…'};
+ render();
+ send('prefs-set',{key:edit.key,valueType:edit.type,value:edit.value,originalKey:edit.originalKey||undefined});
+}
+
+function deletePreferenceEntry(key){
+ preferenceEditor=null;
+ const entries=(state.preferences?.entries||[]).filter((entry)=>entry.key!==key);
+ state.preferences={...state.preferences,entries,saving:true,message:'Deleting '+key+'…'};
+ render();
+ send('prefs-delete',{key});
+}
+
+function optimisticPreferenceValue(type,value){
+ if(type==='string')return value;
+ const trimmed=value.trim();
+ if(type==='boolean')return trimmed.toLowerCase();
+ if(type==='int'||type==='long')return trimmed;
+ if(type==='float'){
+  const number=Number(trimmed);
+  return Number.isInteger(number)?number+'.0':String(number);
+ }
+ if(type==='set'){
+  if(trimmed.startsWith('[')&&trimmed.endsWith(']')){
+   try{
+    const parsed=JSON.parse(trimmed);
+    if(Array.isArray(parsed))return parsed.map((item)=>String(item)).join('\n');
+   }catch{}
+  }
+  const members=value.includes('\n')
+   ?value.split(/\r?\n/).map((item)=>item.trimEnd()).filter((item,index,all)=>item.length>0||all.length===1)
+   :value.split(',').map((item)=>item.trim()).filter(Boolean);
+  return members.join('\n');
+ }
+ return value;
+}
+
+function preferenceValidationIssue(editor){
+ const key=editor.key.trim();
+ if(!key)return {field:'key',message:'Enter a preference key.'};
+ const duplicate=(state.preferences?.entries||[]).some((entry)=>entry.key===key&&entry.key!==editor.originalKey);
+ if(duplicate)return {field:'key',message:'A preference with this key already exists.'};
+ const value=editor.value.trim();
+ if(editor.type==='boolean'&&!['true','false'].includes(value.toLowerCase()))return {field:'value',message:'Use true or false.'};
+ if(editor.type==='int'){
+  if(!/^-?\d+$/.test(value))return {field:'value',message:'Enter a whole number.'};
+  const number=Number(value);
+  if(!Number.isSafeInteger(number)||number < -2147483648||number > 2147483647)return {field:'value',message:'Enter a 32-bit signed integer.'};
+ }
+ if(editor.type==='long'&&!/^-?\d+$/.test(value))return {field:'value',message:'Enter a whole number.'};
+ if(editor.type==='float'&&(!value||Number.isNaN(Number(value))))return {field:'value',message:'Enter a number.'};
+ return null;
+}
+
+function inlinePreferenceKeydown(event){
+ if(event.key==='Escape'){preferenceEditor=null;render();return}
+ if(event.key==='Enter'&&event.target.tagName!=='TEXTAREA'){
+  event.preventDefault();
+  savePreferenceEntry();
+ }
 }
 
 function decodeWorld(topology){

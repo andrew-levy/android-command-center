@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const panel = fs.readFileSync('media/panel.js', 'utf8');
+const styles = fs.readFileSync('media/panel.css', 'utf8');
 const extension = fs.readFileSync('src/extension.ts', 'utf8');
+const databaseInspector = fs.readFileSync('src/databaseInspector.ts', 'utf8');
+const preferencesInspector = fs.readFileSync('src/sharedPreferencesInspector.ts', 'utf8');
 const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const launch = JSON.parse(fs.readFileSync('.vscode/launch.json', 'utf8'));
 
@@ -26,7 +29,7 @@ test('Panel rerenders preserve page and nested scroll positions', () => {
 
 test('Database renders a reachable refresh action and targets the selected database device', () => {
   assert.match(panel, /sectionFooter\(footerMessage,'db-refresh'/);
-  assert.match(panel, /action==='db-refresh'\)send\('db-refresh',\{serial:document\.getElementById\('db-device'\)\?\.value\|\|''\}\)/);
+  assert.match(panel, /action==='db-refresh'.*send\('db-refresh',\{serial:document\.getElementById\('db-device'\)\?\.value\|\|''\}\)/);
   assert.match(panel, /countLabel\(processes\.length,'app'\)/);
   assert.match(panel, /countLabel\(db\.result\.rows\?\.length\|\|0,'row'\)/);
   assert.doesNotMatch(panel, /row\(s\)|processes\.length\+' apps'/);
@@ -39,6 +42,8 @@ test('App data and Database refresh actions share bottom footers with their stat
   assert.match(panel, /class="section-footer"/);
   assert.match(panel, /class="section-footer-message"/);
   assert.match(panel, /class="section-refresh action-button"/);
+  assert.match(styles, /--refresh: var\(--vscode-textLink-foreground/);
+  assert.match(styles, /\.section-refresh \{[\s\S]*background: color-mix\(in srgb, var\(--refresh\) 11%/);
   assert.match(panel, /<span>Refresh<\/span>/);
   assert.doesNotMatch(panel, /row\('Refresh'/);
   assert.doesNotMatch(panel, /section-body-action/);
@@ -51,6 +56,11 @@ test('Failed action icons and error toasts exit after a timed hold', () => {
   assert.match(extension, /this\.showOperationError\(id, messageOf\(error\)\)/);
   assert.match(extension, /ERROR_HOLD_MS/);
   assert.match(extension, /this\.state\.errorExiting = true/);
+});
+
+test('Completed actions render returned state immediately without an artificial busy delay', () => {
+  assert.doesNotMatch(extension, /MIN_BUSY_MS|waitForMinimumBusyTime/);
+  assert.match(extension, /finally \{[\s\S]*visible change and success feedback stay in sync[\s\S]*this\.render\(\)/);
 });
 
 test('Initial load renders the real UI with a loading toast instead of a skeleton', () => {
@@ -73,14 +83,14 @@ test('Database tables use a select and startup database scans stay metadata-only
   assert.match(panel, /el\.dataset\.section==='preferences'.*send\('prefs-open'\)/);
 });
 
-test('SharedPreferences inspector mirrors Database device → app → file flow', () => {
-  assert.match(panel, /section\('preferences','Preferences'/);
+test('Shared Preferences inspector mirrors Database device → app → file flow', () => {
+  assert.match(panel, /section\('preferences','Shared Preferences'/);
   assert.match(panel, /sectionFooter\(footerMessage,'prefs-refresh'/);
   assert.match(panel, /selectWrap\('prefs-device'/);
   assert.match(panel, /selectWrap\('prefs-package'/);
   assert.match(panel, /selectWrap\('prefs-file'/);
-  assert.match(panel, /action==='prefs-refresh'\)send\('prefs-refresh'/);
-  assert.match(panel, /send\('prefs-set',\{key,valueType:type,value:next\}\)/);
+  assert.match(panel, /action==='prefs-refresh'.*send\('prefs-refresh'/);
+  assert.match(panel, /send\('prefs-set',\{key:edit\.key,valueType:edit\.type,value:edit\.value,originalKey:edit\.originalKey\|\|undefined\}\)/);
   assert.match(panel, /send\('prefs-delete',\{key\}\)/);
   assert.match(panel, /data-preserve-scroll="preferences-result"/);
   assert.match(extension, /new SharedPreferencesInspector\(adb, \(\) => this\.privateStorageUri\(\)\.fsPath\)/);
@@ -88,6 +98,49 @@ test('SharedPreferences inspector mirrors Database device → app → file flow'
   assert.match(extension, /case 'prefs-set': await this\.prefsSetEntry/);
   assert.match(extension, /case 'prefs-delete': await this\.prefsDeleteEntry/);
   assert.match(extension, /autoRefreshPreferences\(serial\)/);
+});
+
+test('Database and Preferences save inline edits optimistically without Push or Undo buttons', () => {
+  assert.match(panel, /data-db-edit-input/);
+  assert.match(panel, /data-db-edit-null/);
+  assert.match(panel, /data-prefs-edit-key/);
+  assert.match(panel, /data-prefs-edit-type/);
+  assert.match(panel, /data-prefs-edit-value/);
+  assert.match(panel, /class="text-button danger-text" data-prefs-delete/);
+  assert.match(styles, /\.text-button\.danger-text \{[\s\S]*color: var\(--danger\)/);
+  assert.match(panel, /originalKey:edit\.originalKey/);
+  assert.match(panel, /state\.preferences=\{\.\.\.state\.preferences,entries,saving:true,message:'Saving '/);
+  assert.match(panel, /state\.preferences=\{\.\.\.state\.preferences,entries,saving:true,message:'Deleting '/);
+  assert.doesNotMatch(panel, /actionButton\('prefs-push'/);
+  assert.doesNotMatch(panel, /actionButton\('db-push'/);
+  assert.doesNotMatch(panel, /db-undo|>Undo</);
+  assert.match(panel, /state\.database=\{\.\.\.state\.database,result:result&&rows\?\{\.\.\.result,rows\}:result,saving:true,message:'Applying '/);
+  assert.doesNotMatch(panel, /window\.(prompt|confirm|alert)/);
+  assert.match(databaseInspector, /Updated \$\{column\} on device/);
+  assert.doesNotMatch(databaseInspector, /canUndo|pending-undo|async undo\(/);
+  assert.doesNotMatch(databaseInspector, /this\.state\.query = sql/);
+  assert.match(databaseInspector, /await this\.reloadVisibleResult\(table\)/);
+  assert.match(databaseInspector, /this\.resultQuery = query/);
+  assert.match(panel, /state\.operation\?\.id!=='db-query'\)sqlDraft=state\.database\.query/);
+  assert.match(preferencesInspector, /saved to device/);
+  assert.match(databaseInspector, /await this\.push\(\)/);
+  assert.match(databaseInspector, /recoverAfterMutationFailure/);
+  assert.match(preferencesInspector, /await this\.writeLocalAndPush\(\)/);
+  assert.doesNotMatch(extension, /case 'prefs-push'/);
+  assert.doesNotMatch(extension, /case 'db-push'/);
+  assert.doesNotMatch(extension, /dbUndo|case 'db-undo'/);
+  assert.doesNotMatch(extension, /this\.state\.preferences = await this\.busy\(\s*`Updating/);
+  assert.doesNotMatch(extension, /this\.state\.database = await this\.busy\(\s*`Updating/);
+  assert.match(extension, /saving: true,\s*message: `Saving \$\{trimmedKey\}…`/);
+  assert.match(extension, /saving: true,\s*message: `Deleting \$\{trimmedKey\}…`/);
+  assert.match(extension, /catch \(error\) \{\s*this\.state\.preferences = previous;\s*throw error;/);
+});
+
+test('Inspector device writes quote complete run-as shell commands', () => {
+  assert.match(preferencesInspector, /const command = `mkdir -p shared_prefs && cat > \$\{shellSingleQuote\(remote\)\}`/);
+  assert.match(preferencesInspector, /\['shell', 'run-as', packageName, 'sh', '-c', shellSingleQuote\(command\)\]/);
+  assert.match(databaseInspector, /const command = `mkdir -p databases && cat > \$\{shellSingleQuote\(remote\)\}`/);
+  assert.match(databaseInspector, /\['shell', 'run-as', packageName, 'sh', '-c', shellSingleQuote\(command\)\]/);
 });
 
 test('Runtime artifacts use private extension storage instead of the project', () => {
@@ -170,12 +223,20 @@ test('Run targets are active-only and the picker links to Devices', () => {
   assert.doesNotMatch(panel, /runLabel/);
 });
 
-test('Stream selects and explicitly targets an online Logcat device', () => {
+test('Stream toggles a tracked, color-coded Logcat terminal with readable wrapping', () => {
   assert.match(panel, /selectWrap\(\s*["']stream-device["'],\s*optionsFor\(streamSerial\)/);
   assert.match(panel, /let streamSerial = savedUi\.streamSerial \|\| ["']["']/);
   assert.match(panel, /streamSerial = e\.target\.value;\s*saveUi\(\)/);
-  assert.match(panel, /action === ["']logcat["']\)\s*send\(["']logcat["'], \{\s*serial: document\.getElementById\(["']stream-device["']\)\?\.value \|\| ["']["'],\s*\}\)/);
-  assert.match(extension, /this\.terminal\('Logcat', \[adb\(\), '-s', serial, 'logcat'\]\)/);
+  assert.match(panel, /logcatRunning\?'logcat-stop':'logcat-start'/);
+  assert.match(panel, /logcatRunning\?'Stop':'Start'/);
+  assert.match(panel, /action==='logcat-start'\)send\('logcat-start',\{serial:document\.getElementById\('stream-device'\)\?\.value\|\|''\}\)/);
+  assert.match(panel, /action==='logcat-stop'\)send\('logcat-stop'\)/);
+  assert.match(extension, /case 'logcat-start': this\.startLogcat/);
+  assert.match(extension, /case 'logcat-stop': this\.stopLogcat/);
+  assert.match(extension, /this\.terminal\('Logcat', \[\s*adb\(\), '-s', serial, 'logcat', '-v', 'long', '-v', 'color'/);
+  assert.match(extension, /vscode\.window\.onDidCloseTerminal/);
+  assert.match(extension, /vscode\.window\.onDidEndTerminalShellExecution/);
+  assert.match(extension, /terminal\?\.dispose\(\)/);
   assert.doesNotMatch(extension, /\.\.\.\(message\.serial \? \['-s'/);
 });
 

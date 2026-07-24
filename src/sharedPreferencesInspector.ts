@@ -24,6 +24,7 @@ export type SharedPreferencesInspectorState = {
   selectedFile?: string;
   entries: PrefEntry[];
   dirty: boolean;
+  saving?: boolean;
   localPath?: string;
   message?: string;
   error?: string;
@@ -105,22 +106,48 @@ export class SharedPreferencesInspector {
     return this.snapshot();
   }
 
-  async setEntry(key: string, type: PrefValueType, value: string): Promise<SharedPreferencesInspectorState> {
+  async setEntry(
+    key: string,
+    type: PrefValueType,
+    value: string,
+    originalKey?: string,
+  ): Promise<SharedPreferencesInspectorState> {
     const trimmedKey = key.trim();
+    const trimmedOriginalKey = originalKey?.trim();
     if (!trimmedKey) throw new Error('Enter a preference key.');
     if (!PREF_TYPES.includes(type)) throw new Error(`Unsupported preference type: ${type}`);
     await this.ensureLocal();
     const normalized = normalizePrefValue(type, value);
-    const next = [...this.state.entries];
+    let next = [...this.state.entries];
+    if (trimmedOriginalKey && trimmedOriginalKey !== trimmedKey) {
+      if (!next.some((entry) => entry.key === trimmedOriginalKey)) {
+        throw new Error(`No preference named ${trimmedOriginalKey}.`);
+      }
+      if (next.some((entry) => entry.key === trimmedKey)) {
+        throw new Error(`A preference named ${trimmedKey} already exists.`);
+      }
+      next = next.filter((entry) => entry.key !== trimmedOriginalKey);
+    }
     const index = next.findIndex((entry) => entry.key === trimmedKey);
     const entry: PrefEntry = { key: trimmedKey, type, value: formatPrefValue(type, normalized) };
     if (index >= 0) next[index] = entry;
     else next.push(entry);
     next.sort((a, b) => a.key.localeCompare(b.key));
+    const previousEntries = this.state.entries;
+    const previousDirty = this.state.dirty;
+    const previousMessage = this.state.message;
     this.state.entries = next;
     this.state.dirty = true;
-    await this.writeLocalAndPush();
-    this.state.message = `Updated ${trimmedKey} · pushed to device`;
+    try {
+      await this.writeLocalAndPush();
+    } catch (error) {
+      this.state.entries = previousEntries;
+      this.state.dirty = previousDirty;
+      this.state.message = previousMessage;
+      await this.restoreLocalAfterFailedSave();
+      throw error;
+    }
+    this.state.message = `${index >= 0 || trimmedOriginalKey ? 'Updated' : 'Added'} ${trimmedKey} · saved to device`;
     return this.snapshot();
   }
 
@@ -129,11 +156,22 @@ export class SharedPreferencesInspector {
     if (!trimmedKey) throw new Error('Choose a preference key to delete.');
     await this.ensureLocal();
     const before = this.state.entries.length;
+    const previousEntries = this.state.entries;
+    const previousDirty = this.state.dirty;
+    const previousMessage = this.state.message;
     this.state.entries = this.state.entries.filter((entry) => entry.key !== trimmedKey);
     if (this.state.entries.length === before) throw new Error(`No preference named ${trimmedKey}.`);
     this.state.dirty = true;
-    await this.writeLocalAndPush();
-    this.state.message = `Deleted ${trimmedKey} · pushed to device`;
+    try {
+      await this.writeLocalAndPush();
+    } catch (error) {
+      this.state.entries = previousEntries;
+      this.state.dirty = previousDirty;
+      this.state.message = previousMessage;
+      await this.restoreLocalAfterFailedSave();
+      throw error;
+    }
+    this.state.message = `Deleted ${trimmedKey} · saved to device`;
     return this.snapshot();
   }
 
@@ -193,6 +231,11 @@ export class SharedPreferencesInspector {
     const local = this.requireLocal();
     await fsp.writeFile(local, serializeSharedPreferencesXml(this.state.entries), 'utf8');
     await this.push();
+  }
+
+  private async restoreLocalAfterFailedSave(): Promise<void> {
+    const local = this.requireLocal();
+    await fsp.writeFile(local, serializeSharedPreferencesXml(this.state.entries), 'utf8').catch(() => undefined);
   }
 
   private async discardLocal(): Promise<void> {
@@ -470,11 +513,16 @@ async function pushPreferencesFile(
   localPath: string,
 ): Promise<void> {
   const remote = `shared_prefs/${fileName}`;
-  await adb(adbPath, serial, ['shell', 'run-as', packageName, 'mkdir', '-p', 'shared_prefs']);
-  await pipeToAdb(adbPath, serial, ['shell', 'run-as', packageName, 'sh', '-c', `cat > ${shellSingleQuote(remote)}`], localPath);
+  const command = `mkdir -p shared_prefs && cat > ${shellSingleQuote(remote)}`;
+  await pipeToAdb(
+    adbPath,
+    serial,
+    ['shell', 'run-as', packageName, 'sh', '-c', shellSingleQuote(command)],
+    localPath,
+  );
 }
 
-function shellSingleQuote(value: string): string {
+export function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
