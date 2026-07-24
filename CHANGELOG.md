@@ -2,6 +2,22 @@
 
 All notable changes to Android Command Center are documented here.
 
+## 0.1.15 - 2026-07-24
+
+### Added
+
+- Shared Preferences inspector for debuggable apps: select a device and package, browse SharedPreferences XML key/value pairs, and optimistically save inline edits, additions, and deletions to the device.
+- Database cell edits and mutating SQL now apply automatically without replacing the query editor text or requiring a manual Push step.
+- Logcat streams now have a Start/Stop toggle, priority-level terminal colors, and readable block formatting that keeps wrapped messages separate from metadata.
+
+### Fixed
+
+- Leaving the boolean Shared Preferences type now clears the boolean-only value.
+- Inline database edits rerun the visible query result, preserving custom filters and limits such as `LIMIT 2`.
+- Completed actions now reveal their updated state immediately instead of waiting for success feedback to exit.
+- Running an edited SQL query no longer flashes the previous query text while it executes.
+- Shared Preferences Delete actions use destructive red styling, while section Refresh actions use a distinct blue treatment.
+
 ## 0.1.14 - 2026-07-22
 
 ### Changed

@@ -24,6 +24,7 @@
   );
   --focus: var(--vscode-focusBorder, #0a84ff);
   --green: #34d399;
+  --refresh: var(--vscode-textLink-foreground, #4da3ff);
   --amber: #facc15;
   --danger: var(--vscode-errorForeground, #f87171);
   --input-bg: var(--vscode-input-background, var(--deep));
@@ -195,6 +196,13 @@ button[aria-busy="true"] {
 .text-button:hover {
   color: var(--text);
   background: var(--hover);
+}
+.text-button.danger-text {
+  color: var(--danger);
+}
+.text-button.danger-text:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+  color: color-mix(in srgb, var(--danger) 86%, var(--text));
 }
 
 .status-dot {
@@ -749,21 +757,34 @@ summary:hover .section-title {
   flex: 0 0 auto;
   gap: 5px;
   min-height: 22px;
-  padding: 2px 5px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--refresh) 34%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--refresh) 11%, transparent);
+  color: var(--refresh);
   font-size: 9.5px;
+  font-weight: 650;
   cursor: pointer;
+  box-shadow: inset 0 1px color-mix(in srgb, white 5%, transparent);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 80ms ease;
 }
 .section-refresh:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
+  border-color: color-mix(in srgb, var(--refresh) 55%, transparent);
+  background: color-mix(in srgb, var(--refresh) 18%, transparent);
+  color: color-mix(in srgb, var(--refresh) 82%, var(--text));
+}
+.section-refresh:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.section-refresh .action-result.success {
+  color: currentColor;
 }
 .section-refresh:disabled {
   cursor: default;
-  opacity: 0.65;
+  opacity: 0.55;
 }
 .chevron {
   flex: 0 0 auto;
@@ -1941,6 +1962,100 @@ textarea#db-sql:focus {
 }
 .db-editable:hover {
   background: var(--hover);
+}
+.db-editing {
+  max-width: none !important;
+  overflow: visible !important;
+  padding: 3px !important;
+}
+.inline-cell-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 260px;
+}
+.inline-cell-input,
+.prefs-editor input,
+.prefs-editor select,
+.prefs-editor textarea {
+  min-width: 0;
+  border: 1px solid var(--focus);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  font: inherit;
+}
+.inline-cell-input {
+  flex: 1;
+  width: 120px;
+  padding: 3px 5px;
+}
+.inline-null-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+.inline-null-toggle input {
+  margin: 0;
+}
+.inline-save,
+.inline-cancel {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.inline-save {
+  color: var(--green);
+}
+.inline-save:hover,
+.inline-cancel:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.prefs-table th:last-child,
+.prefs-table td:last-child {
+  max-width: 92px;
+  text-align: right;
+  white-space: nowrap;
+}
+.prefs-type {
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.prefs-actions .text-button {
+  padding: 0;
+  font-size: 10px;
+}
+.prefs-actions .text-button + .text-button {
+  margin-left: 8px;
+}
+.prefs-editor td {
+  max-width: none;
+  padding: 3px;
+  overflow: visible;
+}
+.prefs-editor input,
+.prefs-editor select,
+.prefs-editor textarea {
+  width: 100%;
+  padding: 3px 5px;
+}
+.prefs-editor textarea {
+  min-width: 150px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+.prefs-editor .inline-save-text {
+  color: var(--green);
 }
 
 /* ---------- Overlays ---------- */

@@ -69,6 +69,13 @@
   return Boolean(adbReady&&serial);
  }
 
+ function preferenceValueAfterTypeChange(previousType,nextType,value){
+  const current=String(value??'');
+  if(previousType==='boolean'&&nextType!=='boolean')return '';
+  if(nextType==='boolean'&&!['true','false'].includes(current))return 'false';
+  return current;
+ }
+
  function matchAvdDevices(devices,avds,startingAvdName){
   const remaining=[...(devices||[])];
   const avdMatches=(avds||[]).map((name)=>{
@@ -93,6 +100,7 @@
   parseEmulatorProfiles,
   canCreateEmulator,
   canUseDeviceControls,
+  preferenceValueAfterTypeChange,
   matchAvdDevices,
   FONT_SCALE_PRESETS,
   ROTATION_PRESETS,

@@ -26,6 +26,7 @@ export type DatabaseInspectorState = {
   query: string;
   result?: DbQueryResult;
   dirty: boolean;
+  saving?: boolean;
   localPath?: string;
   message?: string;
   error?: string;
@@ -46,6 +47,7 @@ export class DatabaseInspector {
   private state: DatabaseInspectorState = emptyDatabaseState();
   private workRoot?: string;
   private preparedStorageRoot?: string;
+  private resultQuery?: string;
 
   constructor(
     private readonly adb: () => string,
@@ -86,6 +88,7 @@ export class DatabaseInspector {
       this.state.result = undefined;
       this.state.localPath = undefined;
       this.state.dirty = false;
+      this.resultQuery = undefined;
     }
     return this.snapshot();
   }
@@ -98,6 +101,7 @@ export class DatabaseInspector {
     this.state.selectedTable = undefined;
     this.state.result = undefined;
     this.state.query = '';
+    this.resultQuery = undefined;
     this.state.message = undefined;
     this.state.error = undefined;
     await this.refreshDatabases();
@@ -107,6 +111,7 @@ export class DatabaseInspector {
   async selectDatabase(database: string): Promise<DatabaseInspectorState> {
     if (!database) return this.snapshot();
     if (this.state.dirty) await this.push();
+    this.resultQuery = undefined;
     this.state.selectedDatabase = database;
     this.state.error = undefined;
     await this.pullSelected();
@@ -131,14 +136,24 @@ export class DatabaseInspector {
     this.state.query = query;
     this.state.error = undefined;
     const mutating = isMutatingSql(query);
-    const result = await runSqlite(this.sqlite(), this.requireLocal(), query, !mutating);
+    let result: DbQueryResult;
+    try {
+      result = await runSqlite(this.sqlite(), this.requireLocal(), query, !mutating);
+      if (mutating) {
+        this.state.dirty = true;
+        await this.push();
+      }
+    } catch (error) {
+      if (mutating) await this.recoverAfterMutationFailure();
+      throw error;
+    }
     this.state.result = result;
     if (mutating) {
-      this.state.dirty = true;
-      await this.push();
       await this.loadTables();
-      this.state.message = `Applied on device · ${result.message ?? countLabel(result.changes ?? 0, 'change')}`;
+      if (this.state.selectedTable) await this.openTable(this.state.selectedTable);
+      this.state.message = `Applied to device · ${result.message ?? countLabel(result.changes ?? 0, 'change')}`;
     } else {
+      this.resultQuery = query;
       this.state.message = result.truncated ? `Showing first ${ROW_LIMIT} rows` : result.message;
     }
     return this.snapshot();
@@ -148,12 +163,17 @@ export class DatabaseInspector {
     if (!table || !rowid || !column || column === '__rowid__') throw new Error('Pick an editable cell first.');
     await this.ensureLocal();
     const sql = `UPDATE ${quoteIdent(table)} SET ${quoteIdent(column)} = ${sqlLiteral(value)} WHERE rowid = ${Number(rowid)};`;
-    const result = await runSqlite(this.sqlite(), this.requireLocal(), sql, false);
-    this.state.dirty = true;
-    this.state.query = sql;
-    await this.push();
-    await this.openTable(table);
-    this.state.message = `Updated ${column} · pushed to device (${countLabel(result.changes ?? 0, 'row')})`;
+    let result: DbQueryResult;
+    try {
+      result = await runSqlite(this.sqlite(), this.requireLocal(), sql, false);
+      this.state.dirty = true;
+      await this.push();
+    } catch (error) {
+      await this.recoverAfterMutationFailure();
+      throw error;
+    }
+    await this.reloadVisibleResult(table);
+    this.state.message = `Updated ${column} on device (${countLabel(result.changes ?? 0, 'row')})`;
     return this.snapshot();
   }
 
@@ -164,7 +184,7 @@ export class DatabaseInspector {
     if (this.state.selectedDatabase) {
       await this.pullSelected();
       await this.loadTables();
-      if (this.state.selectedTable) await this.openTable(this.state.selectedTable);
+      if (this.state.selectedTable) await this.reloadVisibleResult(this.state.selectedTable);
     }
     this.state.message = 'Reloaded from device';
     return this.snapshot();
@@ -196,6 +216,7 @@ export class DatabaseInspector {
       this.state.result = undefined;
       this.state.localPath = undefined;
       this.state.dirty = false;
+      this.resultQuery = undefined;
     }
     if (this.state.selectedDatabase && loadSelectedDatabase) {
       await this.pullSelected();
@@ -236,21 +257,38 @@ export class DatabaseInspector {
   private async openTable(table: string): Promise<void> {
     const local = this.requireLocal();
     this.state.selectedTable = table;
+    const query = `SELECT rowid AS __rowid__, * FROM ${quoteIdent(table)} LIMIT ${ROW_LIMIT};`;
     const result = await runSqlite(
       this.sqlite(),
       local,
-      `SELECT rowid AS __rowid__, * FROM ${quoteIdent(table)} LIMIT ${ROW_LIMIT};`,
+      query,
       true,
     );
     this.state.result = result;
+    this.resultQuery = query;
     if (!this.state.query.trim()) {
-      this.state.query = `SELECT rowid AS __rowid__, * FROM ${quoteIdent(table)} LIMIT ${ROW_LIMIT};`;
+      this.state.query = query;
     }
+  }
+
+  private async reloadVisibleResult(table: string): Promise<void> {
+    const query = this.resultQuery;
+    if (!query || !looksLikeQuery(query)) {
+      await this.openTable(table);
+      return;
+    }
+    this.state.selectedTable = table;
+    this.state.result = await runSqlite(this.sqlite(), this.requireLocal(), query, true);
   }
 
   private async ensureLocal(): Promise<void> {
     if (this.state.localPath && fs.existsSync(this.state.localPath)) return;
     await this.pullSelected();
+  }
+
+  private async recoverAfterMutationFailure(): Promise<void> {
+    this.state.dirty = false;
+    await this.pullSelected().catch(() => undefined);
   }
 
   private async discardLocal(): Promise<void> {
@@ -259,6 +297,7 @@ export class DatabaseInspector {
     this.workRoot = undefined;
     this.state.localPath = undefined;
     this.state.dirty = false;
+    this.resultQuery = undefined;
   }
 
   private async localFileFor(packageName: string, database: string): Promise<string> {
@@ -419,8 +458,13 @@ async function pushDatabase(
   localPath: string,
 ): Promise<void> {
   const remote = `databases/${database}`;
-  await adb(adbPath, serial, ['shell', 'run-as', packageName, 'mkdir', '-p', 'databases']);
-  await pipeToAdb(adbPath, serial, ['shell', 'run-as', packageName, 'sh', '-c', `cat > ${shellSingleQuote(remote)}`], localPath);
+  const command = `mkdir -p databases && cat > ${shellSingleQuote(remote)}`;
+  await pipeToAdb(
+    adbPath,
+    serial,
+    ['shell', 'run-as', packageName, 'sh', '-c', shellSingleQuote(command)],
+    localPath,
+  );
   // Drop stale WAL so the app does not replay old pages over our push.
   await adb(adbPath, serial, ['shell', 'run-as', packageName, 'rm', '-f', `${remote}-wal`, `${remote}-shm`]).catch(() => undefined);
 }

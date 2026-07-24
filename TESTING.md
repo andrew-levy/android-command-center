@@ -86,9 +86,10 @@ Remove those workspace overrides before returning to real-tool testing.
 
 ## 4. Manual fixture verification
 
-Before testing Database, Deeplinks, App data, Stream, or Location, install and launch `fullDebug` once.
+Before testing Database, Shared Preferences, Deeplinks, App data, Stream, or Location, install and launch `fullDebug` once.
 
-- Database: Scan `com.example.androidclitest`, open `command-center-test.db`, verify 230 seeded records, edit a value, then tap **Refresh diagnostics** in the app.
+- Database: Scan `com.example.androidclitest`, open `command-center-test.db`, verify 230 seeded records, edit one of rows 1–5, wait for the automatic apply, then tap **Refresh diagnostics** to see the updated test record in the app.
+- Shared Preferences: Scan `com.example.androidclitest`, open a `shared_prefs` XML file, edit a value or add a key, wait for the background save, force-stop/relaunch, then verify in-app.
 - Deeplinks: launch `androidclitest://profile/42`; the exact URI must appear in the app.
 - App data: **Clear cache** should make only Cache marker become Missing. **Clear storage** should require confirmation and reset the launch count/database after relaunch.
 - Stream: start Logcat, tap **Emit test logs**, and filter/inspect `ACC_FIXTURE` messages.

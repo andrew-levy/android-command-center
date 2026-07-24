@@ -9,6 +9,7 @@ const {
   matchAvdDevices,
   parseCoords,
   parseEmulatorProfiles,
+  preferenceValueAfterTypeChange,
   restoreOpenSections,
 } = require('../media/panel-logic.js');
 
@@ -48,6 +49,13 @@ test('emulator create and device controls gate on the right dependencies', () =>
   assert.equal(canUseDeviceControls(true, 'emulator-5554'), true);
   assert.equal(canUseDeviceControls(false, 'emulator-5554'), false);
   assert.deepEqual(parseEmulatorProfiles('medium_phone\nlarge_desktop\n'), ['medium_phone', 'large_desktop']);
+});
+
+test('leaving the boolean preference type clears its boolean-only value', () => {
+  assert.equal(preferenceValueAfterTypeChange('boolean', 'string', 'true'), '');
+  assert.equal(preferenceValueAfterTypeChange('boolean', 'int', 'false'), '');
+  assert.equal(preferenceValueAfterTypeChange('string', 'boolean', 'hello'), 'false');
+  assert.equal(preferenceValueAfterTypeChange('string', 'set', 'hello'), 'hello');
 });
 
 test('a lone unidentified emulator is reconciled with the AVD currently starting', () => {
